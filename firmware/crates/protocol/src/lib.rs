@@ -5,11 +5,13 @@
 //! - [`command`]: the serial console's command language.
 //! - [`record`]: a crash-safe record format for settings kept in flash.
 //! - [`link`]: link-quality statistics for readings from other pads.
+//! - [`json`]: the scales protocol, JSON lines for apps (docs/scales-protocol.md).
 
 #![cfg_attr(not(test), no_std)]
 
 pub mod command;
 pub mod csv;
+pub mod json;
 pub mod link;
 mod pad_msg;
 pub mod record;

@@ -62,6 +62,8 @@ pub enum Command {
     Pads,
     /// `pads reset`: clear the link counters.
     PadsReset,
+    /// `json on|off`: start or stop scales-protocol frames (5/s) for apps.
+    Json(bool),
 }
 
 /// Highest pad ID.
@@ -101,7 +103,8 @@ test zero                next stable reading vs. zero
 test stop                abandon the running test
 sim KG                   simulated load (sim builds only)
 id N                     this pad's ID, 0-3 (LF, RF, LR, RR); saved
-pads [reset]             all pads heard over ESP-NOW | clear link counters";
+pads [reset]             all pads heard over ESP-NOW | clear link counters
+json on|off              JSON frames for apps (docs/scales-protocol.md)";
 
 impl Command {
     /// Parses one line. Words are case-insensitive and separated by whitespace.
@@ -113,12 +116,8 @@ impl Command {
             "status" => Command::Status,
             "ch" => Command::Channel(required(&mut args, "channel")?),
             "fs" => Command::FullScale(positive(required(&mut args, "kg")?)?),
-            "stream" => match args.next().map(lower) {
-                Some("on") => Command::Stream(true),
-                Some("off") => Command::Stream(false),
-                Some(_) => return Err(ParseError::BadArgument),
-                None => return Err(ParseError::Missing("on|off")),
-            },
+            "stream" => Command::Stream(on_off(&mut args)?),
+            "json" => Command::Json(on_off(&mut args)?),
             "tare" => Command::Tare,
             "sim" => Command::Sim(finite(required(&mut args, "kg")?)?),
             "id" => match required::<u8>(&mut args, "id")? {
@@ -193,8 +192,18 @@ fn lower(word: &str) -> &'static str {
         "id",
         "pads",
         "reset",
+        "json",
     ];
     WORDS.iter().find(|w| w.eq_ignore_ascii_case(word)).copied().unwrap_or("")
+}
+
+fn on_off<'a>(args: &mut impl Iterator<Item = &'a str>) -> Result<bool, ParseError> {
+    match args.next().map(lower) {
+        Some("on") => Ok(true),
+        Some("off") => Ok(false),
+        Some(_) => Err(ParseError::BadArgument),
+        None => Err(ParseError::Missing("on|off")),
+    }
 }
 
 fn required<'a, T: core::str::FromStr>(
@@ -250,6 +259,8 @@ mod tests {
             ("id 3", Command::Id(3)),
             ("pads", Command::Pads),
             ("pads reset", Command::PadsReset),
+            ("json on", Command::Json(true)),
+            ("JSON off", Command::Json(false)),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Ok(want), "{line:?}");
@@ -280,6 +291,7 @@ mod tests {
             ("id 4", ParseError::BadArgument),
             ("id", ParseError::Missing("id")),
             ("pads clear", ParseError::BadArgument),
+            ("json", ParseError::Missing("on|off")),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Err(want), "{line:?}");
@@ -288,7 +300,7 @@ mod tests {
 
     #[test]
     fn help_lists_every_command_word() {
-        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "id", "pads"] {
+        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "id", "pads", "json"] {
             assert!(HELP.lines().any(|l| l.starts_with(word)), "{word}");
         }
     }
