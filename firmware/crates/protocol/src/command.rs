@@ -77,6 +77,8 @@ pub enum Command {
     PadsReset,
     /// `json on|off`: start or stop scales-protocol frames (5/s) for apps.
     Json(bool),
+    /// `host on|off`: run the Wi-Fi access point and web page on this pad. Saved; restarts the pad.
+    Host(bool),
 }
 
 /// A pad named in a command.
@@ -141,7 +143,8 @@ assign CORNER PAD        assign directly (PAD = name like 9a91a8, or this)
 assign stop              cancel a press-to-assign
 unassign PAD|CORNER      remove a pad's corner
 blink PAD|CORNER         flash a pad's LED
-json on|off              JSON frames for apps (docs/scales-protocol.md)";
+json on|off              JSON frames for apps (docs/scales-protocol.md)
+host on|off              this pad runs the Wi-Fi + web page (saved; restarts)";
 
 impl Command {
     /// Parses one line. Words are case-insensitive and separated by whitespace.
@@ -155,6 +158,7 @@ impl Command {
             "fs" => Command::FullScale(positive(required(&mut args, "kg")?)?),
             "stream" => Command::Stream(on_off(&mut args)?),
             "json" => Command::Json(on_off(&mut args)?),
+            "host" => Command::Host(on_off(&mut args)?),
             "tare" => match args.next() {
                 None => Command::Tare,
                 Some(a) if a.eq_ignore_ascii_case("all") => Command::TareAll,
@@ -247,6 +251,7 @@ fn lower(word: &str) -> &'static str {
         "pads",
         "reset",
         "json",
+        "host",
     ];
     WORDS.iter().find(|w| w.eq_ignore_ascii_case(word)).copied().unwrap_or("")
 }
@@ -326,6 +331,7 @@ mod tests {
             ("pads reset", Command::PadsReset),
             ("json on", Command::Json(true)),
             ("JSON off", Command::Json(false)),
+            ("host on", Command::Host(true)),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Ok(want), "{line:?}");
@@ -370,7 +376,8 @@ mod tests {
     #[test]
     fn help_lists_every_command_word() {
         for word in [
-            "status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "pads", "json", "assign", "unassign", "blink",
+            "status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "pads", "json", "assign", "unassign",
+            "blink", "host",
         ] {
             assert!(HELP.lines().any(|l| l.starts_with(word)), "{word}");
         }
