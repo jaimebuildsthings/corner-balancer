@@ -2,6 +2,9 @@
 //!
 //! Commands act on the selected channel (`ch N`, default 0), so the same
 //! commands work for a single pad and for a board wired to several HX711s.
+//! Commands about pads (`assign`, `blink`, `tare all`) reach other pads over ESP-NOW.
+
+use crate::pad::{Corner, PadName};
 
 /// A parsed console command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,8 +19,10 @@ pub enum Command {
     FullScale(f32),
     /// `stream on|off`: start or stop CSV rows.
     Stream(bool),
-    /// `tare`: zero at the current reading.
+    /// `tare`: zero this pad at its next settled reading.
     Tare,
+    /// `tare all`: zero every pad.
+    TareAll,
     /// `cal add KG`: record a calibration point with KG on the pad (once stable).
     CalAdd(f32),
     /// `cal undo`: drop the last point.
@@ -56,8 +61,16 @@ pub enum Command {
     TestStop,
     /// `sim KG`: set the simulated load (simulator builds only).
     Sim(f32),
-    /// `id N`: set this pad's ID, 0–3 (LF, RF, LR, RR in a four-pad set). Saved.
-    Id(u8),
+    /// `assign CORNER`: give CORNER to whichever pad is pressed next.
+    AssignPress(Corner),
+    /// `assign CORNER WHO`: give CORNER to a named pad (or `this` one).
+    AssignTo(Corner, Who),
+    /// `assign stop`: abandon a press-to-assign.
+    AssignStop,
+    /// `unassign WHO`: take a pad's corner away.
+    Unassign(Who),
+    /// `blink WHO`: flash a pad's LED.
+    Blink(Who),
     /// `pads`: readings and link quality for every pad heard over ESP-NOW.
     Pads,
     /// `pads reset`: clear the link counters.
@@ -66,8 +79,28 @@ pub enum Command {
     Json(bool),
 }
 
-/// Highest pad ID.
-pub const MAX_PAD_ID: u8 = 3;
+/// A pad named in a command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Who {
+    /// `this`: the pad you're typing at.
+    This,
+    /// Six hex digits, as on the pad's sticker.
+    Name(PadName),
+    /// Whichever pad holds this corner.
+    Corner(Corner),
+}
+
+impl Who {
+    fn parse(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("this") {
+            Some(Who::This)
+        } else if let Some(c) = Corner::parse(s) {
+            Some(Who::Corner(c))
+        } else {
+            PadName::parse(s).map(Who::Name)
+        }
+    }
+}
 
 /// Why a line didn't parse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +123,7 @@ status                   firmware, channels, calibration
 ch N                     select channel N (default 0)
 fs KG                    full-scale rating for pass targets (default 200)
 stream on|off            CSV rows on/off
-tare                     zero at the current reading
+tare [all]               zero this pad | every pad, at the next settled reading
 cal add KG               add a calibration point with KG on the pad
 cal undo | clear         drop the last point | all points
 cal fit                  fit and apply; prints residuals
@@ -102,8 +135,12 @@ test creep [S]           drift under a held load for S seconds (600)
 test zero                next stable reading vs. zero
 test stop                abandon the running test
 sim KG                   simulated load (sim builds only)
-id N                     this pad's ID, 0-3 (LF, RF, LR, RR); saved
 pads [reset]             all pads heard over ESP-NOW | clear link counters
+assign LF|RF|LR|RR       then press on that pad; saved on the pad
+assign CORNER PAD        assign directly (PAD = name like 9a91a8, or this)
+assign stop              cancel a press-to-assign
+unassign PAD|CORNER      remove a pad's corner
+blink PAD|CORNER         flash a pad's LED
 json on|off              JSON frames for apps (docs/scales-protocol.md)";
 
 impl Command {
@@ -118,12 +155,27 @@ impl Command {
             "fs" => Command::FullScale(positive(required(&mut args, "kg")?)?),
             "stream" => Command::Stream(on_off(&mut args)?),
             "json" => Command::Json(on_off(&mut args)?),
-            "tare" => Command::Tare,
-            "sim" => Command::Sim(finite(required(&mut args, "kg")?)?),
-            "id" => match required::<u8>(&mut args, "id")? {
-                id if id <= MAX_PAD_ID => Command::Id(id),
-                _ => return Err(ParseError::BadArgument),
+            "tare" => match args.next() {
+                None => Command::Tare,
+                Some(a) if a.eq_ignore_ascii_case("all") => Command::TareAll,
+                Some(_) => return Err(ParseError::BadArgument),
             },
+            "sim" => Command::Sim(finite(required(&mut args, "kg")?)?),
+            "assign" => {
+                let first = args.next().ok_or(ParseError::Missing("corner"))?;
+                if first.eq_ignore_ascii_case("stop") {
+                    Command::AssignStop
+                } else {
+                    let corner = Corner::parse(first).ok_or(ParseError::BadArgument)?;
+                    match args.next().map(Who::parse) {
+                        None => Command::AssignPress(corner),
+                        Some(Some(Who::Corner(_)) | None) => return Err(ParseError::BadArgument),
+                        Some(Some(who)) => Command::AssignTo(corner, who),
+                    }
+                }
+            }
+            "unassign" => Command::Unassign(who(&mut args)?),
+            "blink" => Command::Blink(who(&mut args)?),
             "pads" => match args.next().map(lower) {
                 None => Command::Pads,
                 Some("reset") => Command::PadsReset,
@@ -189,12 +241,18 @@ fn lower(word: &str) -> &'static str {
         "zero",
         "stop",
         "sim",
-        "id",
+        "assign",
+        "unassign",
+        "blink",
         "pads",
         "reset",
         "json",
     ];
     WORDS.iter().find(|w| w.eq_ignore_ascii_case(word)).copied().unwrap_or("")
+}
+
+fn who<'a>(args: &mut impl Iterator<Item = &'a str>) -> Result<Who, ParseError> {
+    Who::parse(args.next().ok_or(ParseError::Missing("pad"))?).ok_or(ParseError::BadArgument)
 }
 
 fn on_off<'a>(args: &mut impl Iterator<Item = &'a str>) -> Result<bool, ParseError> {
@@ -256,7 +314,14 @@ mod tests {
             ("test zero", Command::TestZero),
             ("test stop", Command::TestStop),
             ("sim 20", Command::Sim(20.0)),
-            ("id 3", Command::Id(3)),
+            ("tare all", Command::TareAll),
+            ("assign lf", Command::AssignPress(Corner::LF)),
+            ("assign RR 9a91a8", Command::AssignTo(Corner::RR, Who::Name(PadName([0x9a, 0x91, 0xa8])))),
+            ("assign rf this", Command::AssignTo(Corner::RF, Who::This)),
+            ("assign stop", Command::AssignStop),
+            ("unassign lr", Command::Unassign(Who::Corner(Corner::LR))),
+            ("blink 9A91A8", Command::Blink(Who::Name(PadName([0x9a, 0x91, 0xa8])))),
+            ("blink this", Command::Blink(Who::This)),
             ("pads", Command::Pads),
             ("pads reset", Command::PadsReset),
             ("json on", Command::Json(true)),
@@ -286,10 +351,14 @@ mod tests {
             ("test", ParseError::Missing("test name")),
             ("test noise -5", ParseError::BadArgument),
             ("test repeat 5 -1", ParseError::BadArgument),
-            ("tare now", ParseError::TooManyArguments),
+            ("status now", ParseError::TooManyArguments),
             ("sim", ParseError::Missing("kg")),
-            ("id 4", ParseError::BadArgument),
-            ("id", ParseError::Missing("id")),
+            ("tare some", ParseError::BadArgument),
+            ("assign", ParseError::Missing("corner")),
+            ("assign XX", ParseError::BadArgument),
+            ("assign lf rf", ParseError::BadArgument),
+            ("assign lf zzzzzz", ParseError::BadArgument),
+            ("blink", ParseError::Missing("pad")),
             ("pads clear", ParseError::BadArgument),
             ("json", ParseError::Missing("on|off")),
         ];
@@ -300,7 +369,9 @@ mod tests {
 
     #[test]
     fn help_lists_every_command_word() {
-        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "id", "pads", "json"] {
+        for word in [
+            "status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "pads", "json", "assign", "unassign", "blink",
+        ] {
             assert!(HELP.lines().any(|l| l.starts_with(word)), "{word}");
         }
     }

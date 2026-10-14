@@ -4,14 +4,18 @@
 
 use core::fmt::{self, Write};
 
+use crate::pad::{Corner, PadName};
+
 /// Protocol version, the `v` field. Bump on incompatible changes.
 pub const VERSION: u8 = 1;
 
 /// One pad's latest reading as seen by the pad sending the frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PadReading {
-    /// Pad ID, 0–3: LF, RF, LR, RR.
-    pub id: u8,
+    /// The pad's name, from its MAC address.
+    pub name: PadName,
+    /// The corner it is assigned to, if any.
+    pub corner: Option<Corner>,
     /// Weight after calibration and tare, kg (counts if not calibrated).
     pub kg: f32,
     /// The reading has settled.
@@ -23,14 +27,19 @@ pub struct PadReading {
 }
 
 /// Writes one frame, without a line ending:
-/// `{"v":1,"type":"weights","t_ms":…,"pads":[{"id":0,"kg":14.001,"stable":true,"calibrated":true,"age_ms":0},…]}`
+/// `{"v":1,"type":"weights","t_ms":…,"pads":[{"name":"9a91a8","corner":"LF","kg":14.001,"stable":true,"calibrated":true,"age_ms":0},…]}`
 pub fn write_weights<W: Write>(w: &mut W, t_ms: u64, pads: &[PadReading]) -> fmt::Result {
     write!(w, r#"{{"v":{VERSION},"type":"weights","t_ms":{t_ms},"pads":["#)?;
     for (i, p) in pads.iter().enumerate() {
         if i > 0 {
             w.write_char(',')?;
         }
-        write!(w, r#"{{"id":{},"kg":"#, p.id)?;
+        write!(w, r#"{{"name":"{}","corner":"#, p.name)?;
+        match p.corner {
+            Some(c) => write!(w, r#""{}""#, c.name())?,
+            None => w.write_str("null")?,
+        }
+        w.write_str(r#","kg":"#)?;
         // JSON has no NaN or infinity.
         if p.kg.is_finite() {
             write!(w, "{:.3}", p.kg)?;
@@ -46,17 +55,19 @@ pub fn write_weights<W: Write>(w: &mut W, t_ms: u64, pads: &[PadReading]) -> fmt
 mod tests {
     use super::*;
 
+    const NAME: PadName = PadName([0x9a, 0x91, 0xa8]);
+
     #[test]
     fn formats_a_frame() {
         let pads = [
-            PadReading { id: 0, kg: 14.0012, stable: true, calibrated: true, age_ms: 0 },
-            PadReading { id: 1, kg: -0.25, stable: false, calibrated: false, age_ms: 80 },
+            PadReading { name: NAME, corner: Some(Corner::LF), kg: 14.0012, stable: true, calibrated: true, age_ms: 0 },
+            PadReading { name: NAME, corner: None, kg: -0.25, stable: false, calibrated: false, age_ms: 80 },
         ];
         let mut s = String::new();
         write_weights(&mut s, 1234, &pads).unwrap();
         assert_eq!(
             s,
-            r#"{"v":1,"type":"weights","t_ms":1234,"pads":[{"id":0,"kg":14.001,"stable":true,"calibrated":true,"age_ms":0},{"id":1,"kg":-0.250,"stable":false,"calibrated":false,"age_ms":80}]}"#
+            r#"{"v":1,"type":"weights","t_ms":1234,"pads":[{"name":"9a91a8","corner":"LF","kg":14.001,"stable":true,"calibrated":true,"age_ms":0},{"name":"9a91a8","corner":null,"kg":-0.250,"stable":false,"calibrated":false,"age_ms":80}]}"#
         );
     }
 
@@ -66,16 +77,23 @@ mod tests {
         write_weights(&mut s, 0, &[]).unwrap();
         assert_eq!(s, r#"{"v":1,"type":"weights","t_ms":0,"pads":[]}"#);
         let mut s = String::new();
-        let p = PadReading { id: 2, kg: f32::NAN, stable: false, calibrated: true, age_ms: 5 };
+        let p = PadReading { name: NAME, corner: None, kg: f32::NAN, stable: false, calibrated: true, age_ms: 5 };
         write_weights(&mut s, 0, &[p]).unwrap();
         assert!(s.contains(r#""kg":null"#), "{s}");
     }
 
     #[test]
-    fn four_pads_fit_the_firmware_line_buffer() {
-        let p = PadReading { id: 3, kg: -1234.567, stable: false, calibrated: false, age_ms: 99_999 };
+    fn eight_pads_fit_the_firmware_line_buffer() {
+        let p = PadReading {
+            name: NAME,
+            corner: Some(Corner::RR),
+            kg: -1234.567,
+            stable: false,
+            calibrated: false,
+            age_ms: 99_999,
+        };
         let mut s = String::new();
-        write_weights(&mut s, u64::from(u32::MAX), &[p; 4]).unwrap();
-        assert!(s.len() < 480, "{} bytes", s.len());
+        write_weights(&mut s, u64::from(u32::MAX), &[p; 8]).unwrap();
+        assert!(s.len() < 1000, "{} bytes", s.len());
     }
 }

@@ -1,10 +1,13 @@
 //! A pad's reading as a fixed-size, versioned frame.
 
+use crate::pad::{Corner, corner_from_byte, corner_to_byte};
+
 /// One reading from one pad.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PadMsg {
-    /// Which pad sent it, 0–3 (LF, RF, LR, RR in a four-pad set).
-    pub pad_id: u8,
+    /// The corner the sending pad is assigned to, if any. (The pad itself is
+    /// identified by the sender's MAC address, which ESP-NOW supplies.)
+    pub corner: Option<Corner>,
     /// Increments per message; gaps reveal dropped frames.
     pub seq: u32,
     /// Weight after calibration and tare, kg.
@@ -38,13 +41,13 @@ impl PadMsg {
     /// Encoded size in bytes.
     pub const LEN: usize = 19;
 
-    /// Little-endian frame: magic "CB", version, pad id, flags, seq, kg, raw,
+    /// Little-endian frame: magic "CB", version, corner (0xFF = none), flags, seq, kg, raw,
     /// temperature in hundredths of a degree (`i16::MIN` when absent).
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[0..2].copy_from_slice(&MAGIC);
         b[2] = VERSION;
-        b[3] = self.pad_id;
+        b[3] = corner_to_byte(self.corner);
         b[4] = if self.stable { FLAG_STABLE } else { 0 } | if self.calibrated { FLAG_CALIBRATED } else { 0 };
         b[5..9].copy_from_slice(&self.seq.to_le_bytes());
         b[9..13].copy_from_slice(&self.kg.to_le_bytes());
@@ -69,7 +72,7 @@ impl PadMsg {
         let le4 = |at: usize| [b[at], b[at + 1], b[at + 2], b[at + 3]];
         let temp = i16::from_le_bytes([b[17], b[18]]);
         Ok(Self {
-            pad_id: b[3],
+            corner: corner_from_byte(b[3]),
             stable: b[4] & FLAG_STABLE != 0,
             calibrated: b[4] & FLAG_CALIBRATED != 0,
             seq: u32::from_le_bytes(le4(5)),
@@ -86,7 +89,7 @@ mod tests {
 
     fn sample() -> PadMsg {
         PadMsg {
-            pad_id: 2,
+            corner: Some(Corner::LR),
             seq: 0xDEAD_BEEF,
             kg: 123.456,
             raw: -8_388_608,
