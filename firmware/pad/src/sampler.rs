@@ -58,23 +58,28 @@ pub async fn hx711_task(ch: u8, mut amp: Amp) {
     }
 }
 
-/// Simulated pad for boards without load cells: 10 samples/s, alternating
-/// 15 s empty and 15 s with 20 kg, with a few grams of noise.
+/// Simulated load in kg as `f32` bits, set with the `sim KG` console command.
+#[cfg(feature = "sim")]
+pub static SIM_KG: AtomicU32 = AtomicU32::new(0);
+
+/// Simulated pad for boards without load cells: 10 samples/s of the load set
+/// by `sim KG` (default 0), scaled like a bench pad, with a few grams of noise.
 #[cfg(feature = "sim")]
 #[embassy_executor::task]
 pub async fn sim_task(ch: u8) {
-    const ZERO: i32 = -120_000;
-    const COUNTS_PER_KG: i32 = 21_000;
+    const ZERO: f32 = -120_000.0;
+    const COUNTS_PER_KG: f32 = 21_000.0;
     let mut ticker = embassy_time::Ticker::every(embassy_time::Duration::from_millis(100));
     let mut rng: u32 = 0x2545_F491;
-    for n in 0u32.. {
+    loop {
         ticker.next().await;
         // xorshift32
         rng ^= rng << 13;
         rng ^= rng >> 17;
         rng ^= rng << 5;
-        let noise = (rng % 81) as i32 - 40;
-        let kg = if (n / 150) % 2 == 0 { 0 } else { 20 };
-        publish(ch, ZERO + COUNTS_PER_KG * kg + noise);
+        let noise = (rng % 81) as f32 - 40.0;
+        let kg = f32::from_bits(SIM_KG.load(Ordering::Relaxed));
+        let counts = (ZERO + COUNTS_PER_KG * kg + noise).clamp(hx711::MIN as f32, hx711::MAX as f32);
+        publish(ch, counts as i32);
     }
 }

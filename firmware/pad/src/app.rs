@@ -284,7 +284,9 @@ impl App {
                 }
             }
             Command::CalShow => self.cal_show().await,
-            Command::TestNoise(n) => self.start(Test::Noise(NoiseTest::new(n)), "noise: leave the pad empty").await,
+            Command::TestNoise(n) => {
+                self.start(Test::Noise(NoiseTest::new(n)), "noise: leave the pad empty; starts once stable").await
+            }
             Command::TestRepeat { placements, threshold_kg } => {
                 let test = Test::Place { test: PlaceRemoveTest::new(placements, threshold_kg), off_center: false };
                 self.start(test, "repeatability: tare the empty pad first, then place the weight").await
@@ -298,6 +300,15 @@ impl App {
                 self.start(test, "creep: tare the empty pad first, then place a heavy load").await
             }
             Command::TestZero => self.start(Test::Zero, "zero: waiting for a stable reading").await,
+            Command::Sim(kg) => {
+                #[cfg(feature = "sim")]
+                {
+                    crate::sampler::SIM_KG.store(kg.to_bits(), Ordering::Relaxed);
+                    say!("sim: load {kg} kg");
+                }
+                #[cfg(not(feature = "sim"))]
+                say!("error: `sim` needs a simulator build (--features sim); ignoring {kg} kg");
+            }
             Command::TestStop => {
                 self.test = None;
                 self.pending_cal_kg = None;

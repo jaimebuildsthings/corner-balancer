@@ -54,6 +54,8 @@ pub enum Command {
     TestZero,
     /// `test stop`: abandon the running test.
     TestStop,
+    /// `sim KG`: set the simulated load (simulator builds only).
+    Sim(f32),
 }
 
 /// Why a line didn't parse.
@@ -87,7 +89,8 @@ test repeat [N] [KG]     place/remove a weight N times (10), loaded above KG (1)
 test offcenter [N] [KG]  same, moving the weight each time (5)
 test creep [S]           drift under a held load for S seconds (600)
 test zero                next stable reading vs. zero
-test stop                abandon the running test";
+test stop                abandon the running test
+sim KG                   simulated load (sim builds only)";
 
 impl Command {
     /// Parses one line. Words are case-insensitive and separated by whitespace.
@@ -106,6 +109,7 @@ impl Command {
                 None => return Err(ParseError::Missing("on|off")),
             },
             "tare" => Command::Tare,
+            "sim" => Command::Sim(finite(required(&mut args, "kg")?)?),
             "cal" => match lower(args.next().ok_or(ParseError::Missing("subcommand"))?) {
                 "add" => Command::CalAdd(finite(required(&mut args, "kg")?)?),
                 "undo" => Command::CalUndo,
@@ -165,6 +169,7 @@ fn lower(word: &str) -> &'static str {
         "creep",
         "zero",
         "stop",
+        "sim",
     ];
     WORDS.iter().find(|w| w.eq_ignore_ascii_case(word)).copied().unwrap_or("")
 }
@@ -218,6 +223,7 @@ mod tests {
             ("test creep 60", Command::TestCreep(60)),
             ("test zero", Command::TestZero),
             ("test stop", Command::TestStop),
+            ("sim 20", Command::Sim(20.0)),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Ok(want), "{line:?}");
@@ -244,6 +250,7 @@ mod tests {
             ("test noise -5", ParseError::BadArgument),
             ("test repeat 5 -1", ParseError::BadArgument),
             ("tare now", ParseError::TooManyArguments),
+            ("sim", ParseError::Missing("kg")),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Err(want), "{line:?}");
@@ -252,7 +259,7 @@ mod tests {
 
     #[test]
     fn help_lists_every_command_word() {
-        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test"] {
+        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim"] {
             assert!(HELP.lines().any(|l| l.starts_with(word)), "{word}");
         }
     }

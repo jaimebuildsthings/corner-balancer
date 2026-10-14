@@ -52,4 +52,4 @@ cal save
 test noise             # then: test repeat, test offcenter, test creep 600, test zero
 ```
 
-With `--features sim`, the simulated pad alternates 15 s at 0 kg and 15 s at 20 kg.
+With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on.

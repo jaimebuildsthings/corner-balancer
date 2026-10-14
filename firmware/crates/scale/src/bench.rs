@@ -72,9 +72,12 @@ impl Targets {
 }
 
 /// Zero noise: the spread of a fixed number of readings with the pad unloaded.
+/// Collection starts at the first stable reading, so a load still settling
+/// when the test starts doesn't count as noise.
 #[derive(Clone, Debug)]
 pub struct NoiseTest {
     samples: u32,
+    started: bool,
     stats: Running,
 }
 
@@ -92,11 +95,15 @@ pub struct NoiseResult {
 impl NoiseTest {
     /// Collects `samples` readings (at least 2).
     pub fn new(samples: u32) -> Self {
-        Self { samples: samples.max(2), stats: Running::new() }
+        Self { samples: samples.max(2), started: false, stats: Running::new() }
     }
 
     /// Feeds a reading; returns the result on the last one.
     pub fn push(&mut self, r: &Reading) -> Option<NoiseResult> {
+        if !self.started && !r.stable {
+            return None;
+        }
+        self.started = true;
         self.stats.push(f64::from(r.kg));
         (self.stats.count() >= self.samples).then(|| NoiseResult {
             samples: self.stats.count(),
@@ -264,6 +271,16 @@ mod tests {
         assert!(r.mean_kg.abs() < 1e-9);
         assert!((r.std_dev_kg - (0.0004f32 / 3.0).sqrt()).abs() < 1e-6);
         assert!(Targets::for_full_scale(200.0).noise_pass(&r));
+    }
+
+    #[test]
+    fn noise_waits_for_a_stable_start() {
+        let mut t = NoiseTest::new(2);
+        assert_eq!(t.push(&reading(5.0, false)), None);
+        assert_eq!(t.push(&reading(0.0, true)), None);
+        let r = t.push(&reading(0.0, false)).unwrap();
+        assert_eq!(r.samples, 2);
+        assert_eq!(r.mean_kg, 0.0);
     }
 
     #[test]
