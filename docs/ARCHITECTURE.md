@@ -6,16 +6,16 @@ How the pieces fit together. For *why* and the build plan, see [plan.md](plan.md
 
 ## System
 
-Every board is a **pad**. One pad also hosts the phone UI. No dedicated hub board.
+Every board is a **pad**. Pads broadcast to each other, so connecting to **any** pad gives all four readings. The UI lives in apps (e.g. stringline.ing) that speak the [scales protocol](scales-protocol.md).
 
 ```mermaid
 flowchart TB
-    phone["📱 Phone browser"]
-    laptop["💻 Laptop"]
-    A["Pad A<br/>(also hosts the UI)"]
-    B["Pads B…D"]
-    phone -. "Wi-Fi AP + WebSocket (1b)" .-> A
-    laptop -- "USB serial: console + CSV<br/>(any pad, 1a)" --> A
+    phone["📱 Phone (e.g. stringline.ing)"]
+    laptop["💻 Laptop (terminal or stringline.ing)"]
+    A["Any pad<br/>(reports every pad it hears)"]
+    B["Other pads"]
+    phone -. "Web Bluetooth (planned)" .-> A
+    laptop -- "USB serial: console, CSV,<br/>JSON frames for Web Serial" --> A
     B -- "ESP-NOW broadcast (1b)" --> A
 ```
 
@@ -117,7 +117,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | Serial console | Text commands (`help` lists them) | `protocol::command` |
 | CSV stream | `t_ms,ch,raw,filtered,kg,stable,temp_c` | `protocol::csv` |
 | Pad ↔ pad | 19-byte `PadMsg`, ESP-NOW broadcast, channel 1 | `protocol::PadMsg` |
-| Phone UI | WebSocket JSON | *planned (1b)* |
+| Apps (e.g. stringline.ing) | JSON lines over USB serial (Web Serial); BLE planned | [scales-protocol.md](scales-protocol.md) |
 
 ## Status
 
@@ -126,5 +126,6 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | Host crates + tests | ✅ Built |
 | Pad firmware: sampling, console, calibration, bench tests, CSV | ✅ Builds; untested on hardware |
 | ESP-NOW between pads, `pads` view | ✅ Builds; untested on hardware |
-| Wi-Fi AP, phone UI | ⏳ Phase 1b |
+| Scales protocol over USB serial (`json on`) | ✅ Builds; untested on hardware |
+| BLE for Web Bluetooth | ⏳ Next |
 | OTA updates | ⏳ Later (partition slots already in place) |

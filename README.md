@@ -1,6 +1,6 @@
 # corner-balancer
 
-DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell amplifier. Each pad is a self-contained instrument; one pad also hosts a phone UI over its own Wi-Fi access point, so the set works in any garage without a network.
+DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell amplifier. Each pad is a self-contained instrument; pads share readings over ESP-NOW, so connecting to any one of them (USB serial now, Bluetooth planned) gives all four corners. No network needed.
 
 > **Status: prototype.** Phase 1 (bench pads rated ~200 kg) is in progress. Nothing here is rated for a car yet. See [docs/plan.md](docs/plan.md) for the roadmap.
 
@@ -14,7 +14,7 @@ DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell 
 | [`firmware/`](firmware/) | Rust firmware (`esp-hal`, Embassy). `crates/` hold the hardware-independent logic with host tests; `pad/` is the ESP32-S3 binary. [Build and flash](firmware/README.md). |
 | `web/` | Phone UI (phase 1b, not started). |
 | [`tools/`](tools/) | [Plot page](tools/README.md) for captured test runs. |
-| [`docs/`](docs/) | [Plan](docs/plan.md) · [Architecture](docs/ARCHITECTURE.md) · [Wiring](docs/wiring.md) · [Assembly](docs/assembly.md) · [Test protocol](docs/test-protocol.md) · [Parts](docs/bom.md) |
+| [`docs/`](docs/) | [Plan](docs/plan.md) · [Architecture](docs/ARCHITECTURE.md) · [Wiring](docs/wiring.md) · [Assembly](docs/assembly.md) · [Test protocol](docs/test-protocol.md) · [Parts](docs/bom.md) · [Scales protocol](docs/scales-protocol.md) |
 | [`hardware/`](hardware/) | Mechanical drawings and CAD (future). |
 
 ## Quick start
