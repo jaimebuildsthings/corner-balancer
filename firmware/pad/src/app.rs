@@ -481,18 +481,23 @@ impl App {
 
     /// Every pad's latest weight, this one included; `None` if unheard, stale
     /// or uncalibrated (an uncalibrated pad reports counts, not kg).
-    fn fresh_weights(&self, now_ms: u64) -> [Option<f32>; PADS] {
-        core::array::from_fn(|id| {
-            if id == usize::from(self.pad_id) {
+    /// Also returns whether all of them are stable.
+    fn fresh_weights(&self, now_ms: u64) -> ([Option<f32>; PADS], bool) {
+        let mut all_stable = true;
+        let weights = core::array::from_fn(|id| {
+            let (kg, stable) = if id == usize::from(self.pad_id) {
                 let chan = self.channels[0].as_ref().filter(|c| c.calibrated)?;
-                chan.last.map(|r| r.kg)
+                chan.last.map(|r| (r.kg, r.stable))?
             } else {
                 self.remotes[id]
                     .as_ref()
                     .filter(|p| p.msg.calibrated && p.stats.age_ms(now_ms).is_some_and(|age| age <= STALE_MS))
-                    .map(|p| p.msg.kg)
-            }
-        })
+                    .map(|p| (p.msg.kg, p.msg.stable))?
+            };
+            all_stable &= stable;
+            Some(kg)
+        });
+        (weights, all_stable)
     }
 
     async fn show_pads(&self) {
@@ -525,12 +530,13 @@ impl App {
                 if p.msg.calibrated { "" } else { "  UNCALIBRATED: counts" }
             );
         }
-        let w = self.fresh_weights(now);
+        let (w, all_stable) = self.fresh_weights(now);
+        let settling = if all_stable { "" } else { "  (settling)" };
         match w {
             [Some(lf), Some(rf), Some(lr), Some(rr)] => {
                 if let Some(c) = scale::corners(lf, rf, lr, rr) {
                     say!(
-                        "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %",
+                        "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %{settling}",
                         c.total,
                         c.front_pct,
                         c.left_pct,
@@ -539,8 +545,8 @@ impl App {
                 }
             }
             [Some(a), Some(b), None, None] => match scale::split(a, b) {
-                Some(pct) => say!("total {:.3} kg  pad 1 carries {:.2} %", a + b, pct),
-                None => say!("total {:.3} kg", a + b),
+                Some(pct) => say!("total {:.3} kg  pad 1 carries {:.2} %{settling}", a + b, pct),
+                None => say!("total {:.3} kg{settling}", a + b),
             },
             _ => say!("(totals need pads 0+1 or all four: heard, fresh and calibrated)"),
         }
