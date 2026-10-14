@@ -157,9 +157,9 @@ Build three more identical pads, then add leveling and the corner app.
 - **Procedure:** driver weight (or ballast) in the seat, fuel level noted, roll on, bounce the car, roll off and on again, then read.
 - **Corner math:** total, front/rear %, left/right %, and cross weight:
 
-```latex
-\text{cross} = \frac{LF + RR}{LF + RF + LR + RR} \times 100\%
-```
+**cross % = (LF + RR) / (LF + RF + LR + RR) × 100**
+
+LF, RF, LR, RR are the left-front, right-front, left-rear and right-rear corner weights.
 
 A 50% cross weight is the usual target for autocross and track setups, adjusted with spring perches or coilover collars.
 
