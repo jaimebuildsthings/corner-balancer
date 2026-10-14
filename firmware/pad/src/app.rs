@@ -1,23 +1,36 @@
 //! The pad's main loop: filters samples, runs console commands and bench tests,
-//! and streams CSV.
+//! streams CSV, and exchanges readings with other pads over ESP-NOW.
 
 use core::sync::atomic::Ordering;
 
-use embassy_time::{Duration, with_timeout};
-use protocol::command::HELP;
+use embassy_time::{Duration, Instant, with_timeout};
+use protocol::command::{HELP, MAX_PAD_ID};
 use protocol::csv;
-use protocol::{Command, ParseError};
+use protocol::link::LinkStats;
+use protocol::{Command, PadMsg, ParseError};
 use scale::bench::{CreepTest, NoiseTest, PlaceEvent, PlaceRemoveTest, Targets};
 use scale::{CalPoint, Calibration, FilterConfig, Fit, Reading, Scale};
 
 use crate::calib_store::CalibStore;
 use crate::console::LINES;
+use crate::link::{Heard, INBOX, OUTBOX};
 use crate::out::say;
 use crate::sampler::{DROPPED, SAMPLES, Sample};
 use crate::{MAX_CHANNELS, temperature};
 
 /// Default full-scale rating for pass targets: the phase 1 bench pad.
 const DEFAULT_FULL_SCALE_KG: f32 = 200.0;
+
+/// A pad not heard from for this long is shown as stale and left out of totals.
+const STALE_MS: u64 = 2_000;
+
+const PADS: usize = MAX_PAD_ID as usize + 1;
+
+/// The latest reading from another pad and how well its link is doing.
+struct RemotePad {
+    msg: PadMsg,
+    stats: LinkStats,
+}
 
 struct Channel {
     scale: Scale,
@@ -46,6 +59,10 @@ pub struct App {
     /// Readings on the selected channel since the last `cal add` or `test zero`.
     fresh: u32,
     store: Option<CalibStore>,
+    pad_id: u8,
+    seq: u32,
+    remotes: [Option<RemotePad>; PADS],
+    warned_duplicate_id: bool,
 }
 
 impl App {
@@ -54,7 +71,7 @@ impl App {
         let stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
         let channels = core::array::from_fn(|i| {
             (i < active).then(|| {
-                let cal = stored[i].clone();
+                let cal = stored.cals[i].clone();
                 let fit = cal.fit().ok();
                 Channel {
                     scale: Scale::new(FilterConfig::default(), fit.unwrap_or(Fit::IDENTITY)),
@@ -75,18 +92,30 @@ impl App {
             pending_tare: false,
             fresh: 0,
             store,
+            pad_id: stored.pad_id.min(MAX_PAD_ID),
+            seq: 0,
+            remotes: Default::default(),
+            warned_duplicate_id: false,
         }
     }
 
     /// Runs forever: handles samples as they arrive and console lines in between.
     pub async fn run(mut self) -> ! {
-        say!("corner-balancer pad {} ({}). Type `help`.", env!("CARGO_PKG_VERSION"), crate::CHIP);
+        say!(
+            "corner-balancer pad {} ({}), pad id {}. Type `help`.",
+            env!("CARGO_PKG_VERSION"),
+            crate::CHIP,
+            self.pad_id
+        );
         if self.store.is_none() {
             say!("warning: no `calib` partition; calibration can't be saved. Flash with partitions.csv.");
         }
         loop {
             if let Ok(sample) = with_timeout(Duration::from_millis(50), SAMPLES.receive()).await {
                 self.on_sample(sample).await;
+            }
+            while let Ok(heard) = INBOX.try_receive() {
+                self.on_heard(heard).await;
             }
             while let Ok(line) = LINES.try_receive() {
                 self.on_line(line.as_str()).await;
@@ -104,6 +133,20 @@ impl App {
         chan.saturated = saturated;
         let Some(r) = chan.scale.push(s.raw) else { return };
         chan.last = Some(r);
+        if ch == 0 {
+            // Channel 0 is this pad's reading for the other pads.
+            let msg = PadMsg {
+                pad_id: self.pad_id,
+                seq: self.seq,
+                kg: r.kg,
+                raw: r.raw,
+                stable: r.stable,
+                calibrated: chan.calibrated,
+                temp_c: temperature::latest(),
+            };
+            self.seq = self.seq.wrapping_add(1);
+            let _ = OUTBOX.try_send(msg);
+        }
         if self.stream {
             let row = csv::Row {
                 t_ms: s.t_ms,
@@ -292,7 +335,7 @@ impl App {
             Command::CalSave => {
                 let cals: [Calibration; MAX_CHANNELS] =
                     core::array::from_fn(|i| self.channels[i].as_ref().map(|c| c.cal.clone()).unwrap_or_default());
-                match self.store.as_mut().map(|s| s.save(&cals)) {
+                match self.store.as_mut().map(|s| s.save_cals(&cals)) {
                     Some(Ok(())) => say!("cal: saved"),
                     Some(Err(e)) => say!("error: save failed: {e:?}"),
                     None => say!("error: no calib partition"),
@@ -327,6 +370,21 @@ impl App {
                 #[cfg(not(feature = "sim"))]
                 say!("error: `sim` needs a simulator build (--features sim); ignoring {kg} kg");
             }
+            Command::Id(id) => {
+                self.pad_id = id;
+                self.seq = 0;
+                self.warned_duplicate_id = false;
+                match self.store.as_mut().map(|s| s.save_pad_id(id)) {
+                    Some(Ok(())) => say!("pad id {id} (saved)"),
+                    Some(Err(e)) => say!("pad id {id}, but saving failed: {e:?}"),
+                    None => say!("pad id {id} (not saved: no calib partition)"),
+                }
+            }
+            Command::Pads => self.show_pads().await,
+            Command::PadsReset => {
+                self.remotes.iter_mut().flatten().for_each(|p| p.stats.reset_counters());
+                say!("link counters cleared");
+            }
             Command::TestStop => {
                 self.test = None;
                 self.pending_cal_kg = None;
@@ -342,7 +400,7 @@ impl App {
     }
 
     async fn status(&self) {
-        say!("firmware {} on {}", env!("CARGO_PKG_VERSION"), crate::CHIP);
+        say!("firmware {} on {}; pad id {}", env!("CARGO_PKG_VERSION"), crate::CHIP, self.pad_id);
         say!("full scale {} kg; dropped samples {}", self.full_scale_kg, DROPPED.load(Ordering::Relaxed));
         match temperature::latest() {
             Some(t) => say!("temperature {t:.2} C"),
@@ -406,10 +464,88 @@ impl App {
         }
     }
 
+    async fn on_heard(&mut self, heard: Heard) {
+        let id = heard.msg.pad_id;
+        if id == self.pad_id {
+            if !self.warned_duplicate_id {
+                self.warned_duplicate_id = true;
+                say!("warning: another pad also uses id {id}; give each pad its own with `id N`");
+            }
+            return;
+        }
+        let Some(slot) = self.remotes.get_mut(usize::from(id)) else { return };
+        let remote = slot.get_or_insert(RemotePad { msg: heard.msg, stats: LinkStats::default() });
+        remote.msg = heard.msg;
+        remote.stats.record(heard.msg.seq, heard.t_ms);
+    }
+
+    /// Every pad's latest weight, this one included; `None` if unheard or stale.
+    fn fresh_weights(&self, now_ms: u64) -> [Option<f32>; PADS] {
+        core::array::from_fn(|id| {
+            if id == usize::from(self.pad_id) {
+                self.channels[0].as_ref().and_then(|c| c.last).map(|r| r.kg)
+            } else {
+                self.remotes[id]
+                    .as_ref()
+                    .filter(|p| p.stats.age_ms(now_ms).is_some_and(|age| age <= STALE_MS))
+                    .map(|p| p.msg.kg)
+            }
+        })
+    }
+
+    async fn show_pads(&self) {
+        let now = Instant::now().as_millis();
+        say!("pad        kg  stable    age  received  lost %  max gap");
+        for id in 0..PADS {
+            if id == usize::from(self.pad_id) {
+                match self.channels[0].as_ref().and_then(|c| c.last) {
+                    Some(r) => say!("{id}* {:>10.3}  {:<6}  (this pad)", r.kg, yes_no(r.stable)),
+                    None => say!("{id}*  (this pad, no readings yet)"),
+                }
+                continue;
+            }
+            let Some(p) = &self.remotes[id] else { continue };
+            let age = p.stats.age_ms(now).unwrap_or(0);
+            say!(
+                "{id}  {:>10.3}  {:<6} {:>5.1}s  {:>8}  {:>6.2}  {:>5.2}s{}",
+                p.msg.kg,
+                yes_no(p.msg.stable),
+                age as f32 / 1000.0,
+                p.stats.received,
+                p.stats.loss_pct().unwrap_or(0.0),
+                p.stats.max_gap_ms as f32 / 1000.0,
+                if age > STALE_MS { "  STALE" } else { "" }
+            );
+        }
+        let w = self.fresh_weights(now);
+        match w {
+            [Some(lf), Some(rf), Some(lr), Some(rr)] => {
+                if let Some(c) = scale::corners(lf, rf, lr, rr) {
+                    say!(
+                        "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %",
+                        c.total,
+                        c.front_pct,
+                        c.left_pct,
+                        c.cross_pct
+                    );
+                }
+            }
+            [Some(a), Some(b), None, None] => match scale::split(a, b) {
+                Some(pct) => say!("total {:.3} kg  pad 1 carries {:.2} %", a + b, pct),
+                None => say!("total {:.3} kg", a + b),
+            },
+            _ => {}
+        }
+    }
+
     fn selected_mut(&mut self) -> &mut Channel {
         // `selected` only ever points at an active channel.
         self.channels[self.selected].as_mut().expect("selected channel is active")
     }
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b { "yes" } else { "no" }
 }
 
 fn verdict(pass: bool) -> &'static str {

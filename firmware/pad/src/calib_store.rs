@@ -1,9 +1,10 @@
-//! Calibration points in the `calib` flash partition.
+//! Calibration points and pad settings in the `calib` flash partition.
 //!
 //! The partition holds two 4 KB slots in the crash-safe record format from
 //! `protocol::record`; each save goes to the slot not holding the newest record.
 //! The payload is, per channel, a length byte followed by that channel's
-//! `Calibration::encode` bytes.
+//! `Calibration::encode` bytes, then an optional settings block `b'S', pad_id`.
+//! Records written before the settings block existed still load.
 
 use esp_bootloader_esp_idf::partitions;
 use esp_storage::FlashStorage;
@@ -14,7 +15,8 @@ use scale::calibration::ENCODED_MAX_LEN;
 use crate::MAX_CHANNELS;
 
 const SLOT_LEN: u32 = FlashStorage::SECTOR_SIZE;
-const PAYLOAD_MAX: usize = MAX_CHANNELS * (1 + ENCODED_MAX_LEN);
+const SETTINGS_LEN: usize = 2;
+const PAYLOAD_MAX: usize = MAX_CHANNELS * (1 + ENCODED_MAX_LEN) + SETTINGS_LEN;
 const RECORD_MAX: usize = record::OVERHEAD + PAYLOAD_MAX;
 
 /// Why the store couldn't be used.
@@ -28,12 +30,23 @@ pub enum StoreError {
     Flash,
 }
 
-/// Calibration storage for all channels.
+/// Everything kept in the partition.
+#[derive(Clone, Default)]
+pub struct Stored {
+    /// Calibration points per channel.
+    pub cals: [Calibration; MAX_CHANNELS],
+    /// This pad's ID, 0–3.
+    pub pad_id: u8,
+}
+
+/// Calibration and settings storage.
 pub struct CalibStore {
     flash: FlashStorage<'static>,
     offset: u32,
     /// Slot and sequence number of the newest record, if any.
     newest: Option<(usize, u32)>,
+    /// What is in flash now, so saving one part keeps the other.
+    saved: Stored,
 }
 
 impl CalibStore {
@@ -46,41 +59,59 @@ impl CalibStore {
             .iter()
             .find(|p| p.label_as_str() == "calib" && p.len() >= 2 * SLOT_LEN)
             .ok_or(StoreError::NoPartition)?;
-        Ok(Self { offset: part.offset(), flash, newest: None })
+        Ok(Self { offset: part.offset(), flash, newest: None, saved: Stored::default() })
     }
 
-    /// Loads every channel's points. Channels with nothing stored come back empty.
-    pub fn load(&mut self) -> Result<[Calibration; MAX_CHANNELS], StoreError> {
+    /// Loads everything. Missing parts come back as defaults.
+    pub fn load(&mut self) -> Result<Stored, StoreError> {
         let mut slots = [[0u8; RECORD_MAX]; 2];
         for (i, slot) in slots.iter_mut().enumerate() {
             self.flash.read(self.slot_addr(i), slot).map_err(|_| StoreError::Flash)?;
         }
-        let mut cals: [Calibration; MAX_CHANNELS] = Default::default();
+        let mut stored = Stored::default();
         self.newest = None;
         if let Some((slot, seq, payload)) = record::newest(&[&slots[0], &slots[1]]) {
             self.newest = Some((slot, seq));
             let mut rest = payload;
-            for cal in &mut cals {
+            for cal in &mut stored.cals {
                 let Some((&len, tail)) = rest.split_first() else { break };
                 let Some(bytes) = tail.get(..usize::from(len)) else { break };
                 *cal = Calibration::decode(bytes).unwrap_or_default();
                 rest = &tail[usize::from(len)..];
             }
+            if let [b'S', pad_id, ..] = rest {
+                stored.pad_id = *pad_id;
+            }
         }
-        Ok(cals)
+        self.saved = stored.clone();
+        Ok(stored)
     }
 
-    /// Saves every channel's points to the older slot.
-    pub fn save(&mut self, cals: &[Calibration; MAX_CHANNELS]) -> Result<(), StoreError> {
+    /// Saves calibration points, keeping the stored settings.
+    pub fn save_cals(&mut self, cals: &[Calibration; MAX_CHANNELS]) -> Result<(), StoreError> {
+        let next = Stored { cals: cals.clone(), pad_id: self.saved.pad_id };
+        self.save(next)
+    }
+
+    /// Saves the pad ID, keeping the stored calibration.
+    pub fn save_pad_id(&mut self, pad_id: u8) -> Result<(), StoreError> {
+        let next = Stored { pad_id, ..self.saved.clone() };
+        self.save(next)
+    }
+
+    fn save(&mut self, stored: Stored) -> Result<(), StoreError> {
         let mut payload = [0u8; PAYLOAD_MAX];
         let mut len = 0;
-        for cal in cals {
+        for cal in &stored.cals {
             let mut enc = [0u8; ENCODED_MAX_LEN];
             let n = cal.encode(&mut enc);
             payload[len] = n as u8;
             payload[len + 1..len + 1 + n].copy_from_slice(&enc[..n]);
             len += 1 + n;
         }
+        payload[len..len + SETTINGS_LEN].copy_from_slice(&[b'S', stored.pad_id]);
+        len += SETTINGS_LEN;
+
         let (slot, seq) = match self.newest {
             Some((slot, seq)) => (1 - slot, seq.wrapping_add(1)),
             None => (0, 1),
@@ -89,6 +120,7 @@ impl CalibStore {
         let n = record::encode(seq, &payload[..len], &mut rec).ok_or(StoreError::Flash)?;
         self.flash.write(self.slot_addr(slot), &rec[..n]).map_err(|_| StoreError::Flash)?;
         self.newest = Some((slot, seq));
+        self.saved = stored;
         Ok(())
     }
 

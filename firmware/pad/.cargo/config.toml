@@ -14,4 +14,4 @@ esp32-build = "build --release --target xtensa-esp32-none-elf --no-default-featu
 esp32-run = "run --release --target xtensa-esp32-none-elf --no-default-features --features esp32"
 
 [unstable]
-build-std = ["core"]
+build-std = ["core", "alloc"]

@@ -1,8 +1,8 @@
 //! Firmware for one corner-scale pad.
 //!
 //! Core 1 samples the HX711 load cell amplifiers; core 0 filters, runs the
-//! serial console and bench tests, reads the temperature probe, and (from
-//! phase 1b) will handle ESP-NOW and the phone UI.
+//! serial console and bench tests, reads the temperature probe, and exchanges
+//! readings with other pads over ESP-NOW. The phone UI comes next (phase 1b).
 //!
 //! The console runs on UART0: the board's "UART"/"COM" USB port.
 
@@ -15,6 +15,7 @@ compile_error!("enable exactly one chip feature: `esp32s3` (default) or `esp32`"
 mod app;
 mod calib_store;
 mod console;
+mod link;
 mod out;
 mod sampler;
 mod temperature;
@@ -52,6 +53,8 @@ async fn main(spawner: Spawner) {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let timg0 = TimerGroup::new(p.TIMG0);
     esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+    // The radio driver needs a heap.
+    esp_alloc::heap_allocator!(size: 72 * 1024);
 
     // Pin map; see docs/wiring.md. Avoids strapping pins, flash/PSRAM pins
     // (ESP32: 6–11; ESP32-S3 N16R8: 26–37) and UART0.
@@ -74,6 +77,15 @@ async fn main(spawner: Spawner) {
     probe.set_output_enable(true);
     probe.set_input_enable(true);
     spawner.spawn(temperature::task(probe).expect("temperature task"));
+
+    let wifi = esp_radio::wifi::WifiController::new(p.WIFI, Default::default()).expect("Wi-Fi init");
+    let esp_now = wifi.esp_now();
+    esp_now.set_channel(link::CHANNEL).expect("ESP-NOW channel");
+    let (_manager, tx, rx) = esp_now.split();
+    // ESP-NOW keeps the radio running after the controller is dropped.
+    drop(wifi);
+    spawner.spawn(link::sender(tx).expect("ESP-NOW sender"));
+    spawner.spawn(link::receiver(rx).expect("ESP-NOW receiver"));
 
     // Writes park core 1 for the few milliseconds a sector erase takes.
     let flash = FlashStorage::new(p.FLASH).multicore_auto_park();
