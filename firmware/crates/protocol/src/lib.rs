@@ -4,11 +4,13 @@
 //! - [`csv`]: the CSV rows streamed over USB serial for logging.
 //! - [`command`]: the serial console's command language.
 //! - [`record`]: a crash-safe record format for settings kept in flash.
+//! - [`link`]: link-quality statistics for readings from other pads.
 
 #![cfg_attr(not(test), no_std)]
 
 pub mod command;
 pub mod csv;
+pub mod link;
 mod pad_msg;
 pub mod record;
 

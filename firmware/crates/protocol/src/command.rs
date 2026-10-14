@@ -56,7 +56,16 @@ pub enum Command {
     TestStop,
     /// `sim KG`: set the simulated load (simulator builds only).
     Sim(f32),
+    /// `id N`: set this pad's ID, 0–3 (LF, RF, LR, RR in a four-pad set). Saved.
+    Id(u8),
+    /// `pads`: readings and link quality for every pad heard over ESP-NOW.
+    Pads,
+    /// `pads reset`: clear the link counters.
+    PadsReset,
 }
+
+/// Highest pad ID.
+pub const MAX_PAD_ID: u8 = 3;
 
 /// Why a line didn't parse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +99,9 @@ test offcenter [N] [KG]  same, moving the weight each time (5)
 test creep [S]           drift under a held load for S seconds (600)
 test zero                next stable reading vs. zero
 test stop                abandon the running test
-sim KG                   simulated load (sim builds only)";
+sim KG                   simulated load (sim builds only)
+id N                     this pad's ID, 0-3 (LF, RF, LR, RR); saved
+pads [reset]             all pads heard over ESP-NOW | clear link counters";
 
 impl Command {
     /// Parses one line. Words are case-insensitive and separated by whitespace.
@@ -110,6 +121,15 @@ impl Command {
             },
             "tare" => Command::Tare,
             "sim" => Command::Sim(finite(required(&mut args, "kg")?)?),
+            "id" => match required::<u8>(&mut args, "id")? {
+                id if id <= MAX_PAD_ID => Command::Id(id),
+                _ => return Err(ParseError::BadArgument),
+            },
+            "pads" => match args.next().map(lower) {
+                None => Command::Pads,
+                Some("reset") => Command::PadsReset,
+                Some(_) => return Err(ParseError::BadArgument),
+            },
             "cal" => match lower(args.next().ok_or(ParseError::Missing("subcommand"))?) {
                 "add" => Command::CalAdd(finite(required(&mut args, "kg")?)?),
                 "undo" => Command::CalUndo,
@@ -170,6 +190,9 @@ fn lower(word: &str) -> &'static str {
         "zero",
         "stop",
         "sim",
+        "id",
+        "pads",
+        "reset",
     ];
     WORDS.iter().find(|w| w.eq_ignore_ascii_case(word)).copied().unwrap_or("")
 }
@@ -224,6 +247,9 @@ mod tests {
             ("test zero", Command::TestZero),
             ("test stop", Command::TestStop),
             ("sim 20", Command::Sim(20.0)),
+            ("id 3", Command::Id(3)),
+            ("pads", Command::Pads),
+            ("pads reset", Command::PadsReset),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Ok(want), "{line:?}");
@@ -251,6 +277,9 @@ mod tests {
             ("test repeat 5 -1", ParseError::BadArgument),
             ("tare now", ParseError::TooManyArguments),
             ("sim", ParseError::Missing("kg")),
+            ("id 4", ParseError::BadArgument),
+            ("id", ParseError::Missing("id")),
+            ("pads clear", ParseError::BadArgument),
         ];
         for (line, want) in cases {
             assert_eq!(Command::parse(line), Err(want), "{line:?}");
@@ -259,7 +288,7 @@ mod tests {
 
     #[test]
     fn help_lists_every_command_word() {
-        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim"] {
+        for word in ["status", "ch", "fs", "stream", "tare", "cal", "test", "sim", "id", "pads"] {
             assert!(HELP.lines().any(|l| l.starts_with(word)), "{word}");
         }
     }
