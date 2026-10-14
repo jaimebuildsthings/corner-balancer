@@ -39,6 +39,11 @@ impl Fit {
     /// Passes counts through unchanged, so an uncalibrated pad reports counts as "kg".
     pub const IDENTITY: Fit = Fit { slope: 1.0, intercept: 0.0, max_residual_kg: 0.0 };
 
+    /// True for [`Fit::IDENTITY`], i.e. the scale is not calibrated.
+    pub fn is_identity(&self) -> bool {
+        self.slope == 1.0 && self.intercept == 0.0
+    }
+
     /// Weight for a (filtered) count value.
     pub fn kg(&self, counts: f64) -> f64 {
         self.slope * counts + self.intercept

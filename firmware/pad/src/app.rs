@@ -249,6 +249,7 @@ impl App {
             }
             Command::Stream(on) => {
                 self.stream = on;
+                crate::console::QUIET.store(on, Ordering::Relaxed);
                 if on {
                     say!("{}", csv::HEADER);
                 }
@@ -320,16 +321,19 @@ impl App {
         for (i, chan) in self.channels.iter().enumerate() {
             let Some(chan) = chan else { continue };
             let mark = if i == self.selected { '*' } else { ' ' };
-            let state = if chan.calibrated { "calibrated" } else { "uncalibrated (kg column = counts)" };
+            let stable = |r: &Reading| if r.stable { ", stable" } else { "" };
+            let points = chan.cal.points().len();
             match chan.last {
+                Some(r) if chan.calibrated => {
+                    say!("{mark}ch{i}: calibrated, {points} points, {:.3} kg (raw {}){}", r.kg, r.raw, stable(&r))
+                }
                 Some(r) => say!(
-                    "{mark}ch{i}: {state}, {} points, raw {} kg {:.3}{}",
-                    chan.cal.points().len(),
+                    "{mark}ch{i}: uncalibrated, {points} points, {:.0} counts (raw {}){}",
+                    r.filtered,
                     r.raw,
-                    r.kg,
-                    if r.stable { " stable" } else { "" }
+                    stable(&r)
                 ),
-                None => say!("{mark}ch{i}: {state}, no readings"),
+                None => say!("{mark}ch{i}: {points} points, no readings yet"),
             }
         }
     }

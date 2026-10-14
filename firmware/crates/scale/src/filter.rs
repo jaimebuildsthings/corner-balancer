@@ -1,6 +1,7 @@
 //! The per-channel filter: median of 5, exponential moving average, tare, stability.
 
 use crate::calibration::Fit;
+use crate::math;
 
 /// Longest stability window, in samples.
 pub const MAX_STABLE_SAMPLES: usize = 64;
@@ -15,6 +16,8 @@ pub struct FilterConfig {
     pub ema_alpha: f32,
     /// A reading is stable when the last `stable_samples` readings span at most this many kg.
     pub stable_band_kg: f32,
+    /// The same band in raw counts, used until the scale is calibrated.
+    pub stable_band_counts: f32,
     /// Stability window length, 1..=[`MAX_STABLE_SAMPLES`].
     pub stable_samples: u16,
 }
@@ -22,7 +25,8 @@ pub struct FilterConfig {
 impl Default for FilterConfig {
     /// Tuned for the HX711 at 10 samples/s: settles in about a second.
     fn default() -> Self {
-        Self { ema_alpha: 0.3, stable_band_kg: 0.05, stable_samples: 10 }
+        // 500 counts is roughly 50 g on a 200 kg bench pad before calibration.
+        Self { ema_alpha: 0.3, stable_band_kg: 0.05, stable_band_counts: 500.0, stable_samples: 10 }
     }
 }
 
@@ -49,8 +53,8 @@ pub struct Scale {
     median_len: usize,
     median_pos: usize,
     ema: Option<f64>,
-    // Untared kg, so taring doesn't disturb the stability window.
-    recent: [f32; MAX_STABLE_SAMPLES],
+    // Filtered counts, so neither tare nor recalibration disturbs the window.
+    recent: [f64; MAX_STABLE_SAMPLES],
     recent_len: usize,
     recent_pos: usize,
 }
@@ -61,6 +65,7 @@ impl Scale {
         let cfg = FilterConfig {
             ema_alpha: if cfg.ema_alpha > 0.0 && cfg.ema_alpha <= 1.0 { cfg.ema_alpha } else { 1.0 },
             stable_band_kg: cfg.stable_band_kg,
+            stable_band_counts: cfg.stable_band_counts,
             stable_samples: cfg.stable_samples.clamp(1, MAX_STABLE_SAMPLES as u16),
         };
         Self {
@@ -106,8 +111,7 @@ impl Scale {
         };
         self.ema = Some(filtered);
 
-        let gross = self.fit.kg(filtered) as f32;
-        self.recent[self.recent_pos] = gross;
+        self.recent[self.recent_pos] = filtered;
         self.recent_pos = (self.recent_pos + 1) % MAX_STABLE_SAMPLES;
         self.recent_len = (self.recent_len + 1).min(MAX_STABLE_SAMPLES);
 
@@ -128,7 +132,6 @@ impl Scale {
     /// Replaces the calibration. The tare is kept, since it is stored in counts.
     pub fn set_fit(&mut self, fit: Fit) {
         self.fit = fit;
-        self.recent_len = 0;
     }
 
     /// Discards filter history, e.g. after the amplifier was power-cycled.
@@ -151,13 +154,18 @@ impl Scale {
         if self.recent_len < window {
             return false;
         }
-        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for i in 0..window {
             let v = self.recent[(self.recent_pos + MAX_STABLE_SAMPLES - 1 - i) % MAX_STABLE_SAMPLES];
             lo = lo.min(v);
             hi = hi.max(v);
         }
-        hi - lo <= self.cfg.stable_band_kg
+        let band_counts = if self.fit.is_identity() {
+            f64::from(self.cfg.stable_band_counts)
+        } else {
+            f64::from(self.cfg.stable_band_kg) / math::abs(self.fit.slope)
+        };
+        hi - lo <= band_counts
     }
 }
 
@@ -165,7 +173,8 @@ impl Scale {
 mod tests {
     use super::*;
 
-    const UNFILTERED: FilterConfig = FilterConfig { ema_alpha: 1.0, stable_band_kg: 0.05, stable_samples: 3 };
+    const UNFILTERED: FilterConfig =
+        FilterConfig { ema_alpha: 1.0, stable_band_kg: 0.05, stable_band_counts: 20.0, stable_samples: 3 };
     // 1000 counts per kg, zero at 50_000 counts.
     const FIT: Fit = Fit { slope: 0.001, intercept: -50.0, max_residual_kg: 0.0 };
 
@@ -254,6 +263,25 @@ mod tests {
         // breaks stability, and three settled readings restore it.
         let out = feed(&mut s, &[50_500; 6]);
         assert_eq!(out.iter().map(|r| r.stable).collect::<Vec<_>>(), vec![true, true, false, false, true, true]);
+    }
+
+    #[test]
+    fn uncalibrated_stability_uses_the_counts_band() {
+        let mut s = Scale::new(UNFILTERED, Fit::IDENTITY);
+        // Wobbling by 10 counts is within the 20-count band.
+        let out = feed(&mut s, &[300_000, 300_010, 300_000, 300_010, 300_000, 300_010, 300_000, 300_010]);
+        assert!(out.last().unwrap().stable);
+        // A 100-count step is not.
+        let out = feed(&mut s, &[300_100; 3]);
+        assert!(!out.last().unwrap().stable);
+    }
+
+    #[test]
+    fn recalibration_keeps_stability() {
+        let mut s = Scale::new(UNFILTERED, Fit::IDENTITY);
+        feed(&mut s, &[60_000; 8]);
+        s.set_fit(FIT);
+        assert!(s.push(60_000).unwrap().stable);
     }
 
     #[test]
