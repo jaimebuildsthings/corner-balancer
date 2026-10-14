@@ -52,7 +52,37 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     esp_println::println!("\r\npanic: {info}\r\nrestarting");
+    // Let the UART drain before the reset cuts the message off.
+    esp_hal::delay::Delay::new().delay_millis(1000);
     esp_hal::system::software_reset()
+}
+
+/// Host-mode boots that haven't yet run for [`HOST_OK_AFTER_S`]. Kept in RTC
+/// RAM, which survives software resets (including panics) but not power-off.
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut HOST_BOOTS: u32 = 0;
+
+/// Host mode counts as working after this long.
+const HOST_OK_AFTER_S: u64 = 15;
+
+/// Consecutive failed host boots after which the pad starts without host mode.
+const HOST_MAX_FAILS: u32 = 2;
+
+fn host_boots() -> u32 {
+    // SAFETY: only touched from core 0, before or between awaits, never concurrently.
+    unsafe { core::ptr::addr_of!(HOST_BOOTS).read_volatile() }
+}
+
+fn set_host_boots(n: u32) {
+    // SAFETY: as above.
+    unsafe { core::ptr::addr_of_mut!(HOST_BOOTS).write_volatile(n) }
+}
+
+/// Clears the failed-boot count once host mode has stayed up.
+#[embassy_executor::task]
+async fn host_ok_task() {
+    embassy_time::Timer::after_secs(HOST_OK_AFTER_S).await;
+    set_host_boots(0);
 }
 
 #[esp_hal::main]
@@ -98,8 +128,17 @@ async fn main(spawner: Spawner) {
     // Writes park core 1 for the few milliseconds a sector erase takes.
     let flash = FlashStorage::new(p.FLASH).multicore_auto_park();
     let mut store = calib_store::CalibStore::open(flash).ok();
-    let stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
+    let mut stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
 
+    // If host mode keeps crashing at boot, start as a plain pad so `host off` can fix it.
+    let host_failed = stored.host && host_boots() >= HOST_MAX_FAILS;
+    if host_failed {
+        set_host_boots(0);
+        stored.host = false; // this boot only; flash still says host until `host off`
+    } else if stored.host {
+        set_host_boots(host_boots() + 1);
+        spawner.spawn(host_ok_task().expect("host watchdog task"));
+    }
     let (wifi, web_device) = if stored.host {
         use esp_radio::wifi::{Config, ControllerConfig, Interface, ap::AccessPointConfig, sta::StationConfig};
         let ssid = web::ssid(&mac);
@@ -161,5 +200,8 @@ async fn main(spawner: Spawner) {
         });
     });
 
+    if host_failed {
+        out::line(b"warning: host mode crashed twice at boot; starting without it. Run `host off`, then report the panic above.").await;
+    }
     app::App::new(1, store, stored, mac).run().await
 }
