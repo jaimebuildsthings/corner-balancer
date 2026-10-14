@@ -36,9 +36,9 @@ const FRAME_MAX: usize = 1024;
 /// HTTP connections served at once (each is one task with its own buffers).
 const WEB_TASKS: usize = 3;
 
-/// Sockets: one per web task, DHCP and captive DNS, plus the DNS-client socket
-/// embassy-net adds for itself (its `dns` feature is enabled by a dependency).
-const SOCKETS: usize = WEB_TASKS + 2 + 1;
+/// Sockets: one per web task, plus DHCP and captive DNS. (embassy-net would add
+/// one more for its own DNS client if its `dns` feature were on; it's kept off.)
+const SOCKETS: usize = WEB_TASKS + 2;
 
 struct Frame {
     buf: [u8; FRAME_MAX],
