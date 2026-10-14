@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16161a">
+<title>Corner Scales</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #fff; --fg: #1f1f1c; --muted: #6a6962; --line: #dedcd4;
+    --accent: #2f6fd6; --ok: #2f9d5c; --warn: #c98a12; --bad: #c8412f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --card: #222227; --fg: #ecebe6; --muted: #a3a29b; --line: #34343b;
+            --accent: #6fa0f0; --ok: #4cc17e; --warn: #e2a93b; --bad: #ef6b57; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+  .car { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; position: relative; }
+  .axle { grid-column: 1 / -1; text-align: center; font-size: 12px; color: var(--muted); letter-spacing: .08em; }
+  .corner { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-height: 108px;
+    display: flex; flex-direction: column; gap: 2px; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+  .corner .top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
+  .corner .kg { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .corner .kg small { font-size: 15px; font-weight: 500; color: var(--muted); }
+  .corner .sub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .corner.empty .kg { color: var(--muted); font-size: 18px; font-weight: 500; padding-top: 8px; }
+  .corner.flag { border-color: var(--warn); }
+  .corner.conflict { border-color: var(--bad); }
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 8px; text-align: center; }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .stat .value { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .hint { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .note { font-size: 13px; color: var(--muted); text-align: center; min-height: 1.4em; margin: 4px 0 10px; }
+  .note.warn { color: var(--warn); } .note.bad { color: var(--bad); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  button.btn { appearance: none; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 12px;
+    padding: 12px 8px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.rec { border-color: var(--bad); color: var(--bad); }
+  button.btn:disabled { opacity: .5; }
+  .spares { margin-top: 16px; }
+  .spares h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
+  .chip { display: inline-flex; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; margin: 0 6px 6px 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .chip button { border: 0; background: none; color: var(--accent); font: inherit; padding: 0; cursor: pointer; }
+  dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--fg); max-width: 360px; width: calc(100% - 32px); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h3 { margin: 0 0 6px; } dialog p { margin: 0 0 14px; color: var(--muted); }
+  .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  footer { margin-top: 18px; text-align: center; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Corner Scales</h1>
+    <div class="status"><span id="link-dot" class="dot"></span><span id="link-text">connecting…</span></div>
+  </header>
+
+  <section class="car" id="car" aria-label="Corner weights">
+    <div class="axle">FRONT</div>
+  </section>
+
+  <section class="summary">
+    <div class="stat"><div class="label">Total</div><div class="value" id="s-total">–</div><div class="hint">kg</div></div>
+    <div class="stat"><div class="label">Front</div><div class="value" id="s-front">–</div><div class="hint">%</div></div>
+    <div class="stat"><div class="label">Left</div><div class="value" id="s-left">–</div><div class="hint">%</div></div>
+    <div class="stat"><div class="label">Cross</div><div class="value" id="s-cross">–</div><div class="hint" id="s-cross-hint">LF+RR %</div></div>
+  </section>
+  <div class="note" id="note"></div>
+
+  <section class="actions">
+    <button class="btn primary" id="b-tare">Tare all</button>
+    <button class="btn" id="b-assign">Assign</button>
+    <button class="btn" id="b-log">Log CSV</button>
+  </section>
+
+  <section class="spares" id="spares" hidden>
+    <h2>Pads without a corner</h2>
+    <div id="spare-list"></div>
+  </section>
+
+  <footer>Tap a corner to blink its pad. Wait for every corner to show <span class="dot ok"></span> before reading cross weight.</footer>
+</main>
+
+<dialog id="dlg">
+  <h3 id="dlg-title"></h3>
+  <p id="dlg-text"></p>
+  <div class="row" id="dlg-buttons"></div>
+</dialog>
+
+<script>
+"use strict";
+const CORNERS = ["LF", "RF", "LR", "RR"];
+const WHEEL = { LF: "left-front", RF: "right-front", LR: "left-rear", RR: "right-rear" };
+const $ = (id) => document.getElementById(id);
+const mock = location.protocol === "file:" || new URLSearchParams(location.search).has("mock");
+
+let frame = null;          // latest weights frame
+let lastFrameAt = 0;
+let log = null;            // rows while logging CSV
+let assign = null;         // assign walk-through: { corners, baselines }
+const PRESS_KG = 2;        // rise that counts as pressing a pad
+
+// ---- corner cards ----------------------------------------------------------
+const cards = {};
+for (const c of CORNERS) {
+  const b = document.createElement("button");
+  b.className = "corner empty";
+  b.innerHTML = `<div class="top"><strong>${c}</strong><span class="dot"></span></div>
+    <div class="kg">–</div><div class="sub">&nbsp;</div>`;
+  b.addEventListener("click", () => send(`blink ${c}`));
+  $("car").appendChild(b);
+  cards[c] = b;
+}
+$("car").insertAdjacentHTML("beforeend", '<div class="axle">REAR</div>');
+
+// ---- math ------------------------------------------------------------------
+function analyse(f) {
+  const byCorner = {}, claims = {}, spares = [];
+  for (const p of f.pads) {
+    if (!p.corner) { spares.push(p); continue; }
+    claims[p.corner] = (claims[p.corner] || 0) + 1;
+    byCorner[p.corner] = p;
+  }
+  const usable = (c) => byCorner[c] && claims[c] === 1 && byCorner[c].calibrated && byCorner[c].kg !== null;
+  const kg = Object.fromEntries(CORNERS.filter(usable).map((c) => [c, byCorner[c].kg]));
+  const present = Object.keys(kg);
+  const total = present.reduce((a, c) => a + kg[c], 0);
+  const settled = present.every((c) => byCorner[c].stable);
+  const pct = (...cs) => (total > 0 ? (cs.reduce((a, c) => a + kg[c], 0) / total) * 100 : null);
+  const all4 = present.length === 4;
+  return {
+    byCorner, claims, spares, kg, total, settled, present,
+    front: all4 ? pct("LF", "RF") : null,
+    left: all4 ? pct("LF", "LR") : null,
+    cross: all4 ? pct("LF", "RR") : null,
+    split: present.length === 2 ? { a: present[0], b: present[1], pctB: pct(present[1]) } : null,
+  };
+}
+
+const fmt = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "–" : v.toFixed(d));
+
+// ---- render ----------------------------------------------------------------
+function render() {
+  if (!frame) return;
+  const a = analyse(frame);
+  for (const c of CORNERS) {
+    const card = cards[c], p = a.byCorner[c];
+    const dot = card.querySelector(".dot"), kgEl = card.querySelector(".kg"), sub = card.querySelector(".sub");
+    card.className = "corner";
+    dot.className = "dot";
+    if (!p) {
+      card.classList.add("empty");
+      kgEl.textContent = "no pad";
+      sub.innerHTML = "&nbsp;";
+    } else if (a.claims[c] > 1) {
+      card.classList.add("conflict");
+      dot.classList.add("bad");
+      kgEl.innerHTML = "conflict";
+      sub.textContent = `${a.claims[c]} pads claim ${c}`;
+    } else if (!p.calibrated) {
+      card.classList.add("flag");
+      dot.classList.add("warn");
+      kgEl.innerHTML = "uncal.";
+      sub.textContent = `pad ${p.name}`;
+    } else {
+      dot.classList.add(p.stable ? "ok" : "warn");
+      kgEl.innerHTML = `${fmt(p.kg)} <small>kg</small>`;
+      const share = a.total > 0 && a.present.length > 1 ? ` · ${fmt((p.kg / a.total) * 100)} %` : "";
+      sub.textContent = `pad ${p.name}${share}`;
+    }
+  }
+  $("s-total").textContent = a.present.length ? fmt(a.total) : "–";
+  $("s-front").textContent = fmt(a.front);
+  $("s-left").textContent = fmt(a.left);
+  $("s-cross").textContent = fmt(a.cross);
+  $("s-cross-hint").textContent = a.cross === null ? "LF+RR %" : `${a.cross >= 50 ? "+" : ""}${fmt(a.cross - 50)} vs 50`;
+
+  const note = $("note");
+  note.className = "note";
+  if (Object.values(a.claims).some((n) => n > 1)) {
+    note.className = "note bad"; note.textContent = "Two pads claim one corner: use Assign to fix it.";
+  } else if (a.split) {
+    note.textContent = `${a.split.b} carries ${fmt(a.split.pctB, 2)} % of ${fmt(a.total)} kg` + (a.settled ? "" : " (settling)");
+  } else if (a.present.length && !a.settled) {
+    note.className = "note warn"; note.textContent = "Settling…";
+  } else if (a.present.length > 0 && a.present.length < 4) {
+    note.textContent = `${a.present.length} of 4 corners reporting`;
+  } else {
+    note.textContent = "";
+  }
+
+  $("spares").hidden = a.spares.length === 0;
+  $("spare-list").innerHTML = "";
+  for (const p of a.spares) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `<span>${p.name}</span><span>${p.calibrated ? fmt(p.kg) + " kg" : "uncal."}</span>`;
+    const blink = document.createElement("button");
+    blink.textContent = "blink";
+    blink.onclick = () => send(`blink ${p.name}`);
+    chip.appendChild(blink);
+    $("spare-list").appendChild(chip);
+  }
+
+  if (assign) checkPress();
+  if (log) log.push([new Date().toISOString(), ...CORNERS.map((c) => (c in a.kg ? a.kg[c].toFixed(3) : "")), a.total.toFixed(3), fmt(a.cross, 2)]);
+}
+
+// ---- dialogs ---------------------------------------------------------------
+function dialog(title, text, buttons) {
+  $("dlg-title").textContent = title;
+  $("dlg-text").textContent = text;
+  const row = $("dlg-buttons");
+  row.innerHTML = "";
+  for (const [label, fn, primary] of buttons) {
+    const b = document.createElement("button");
+    b.className = "btn" + (primary ? " primary" : "");
+    b.textContent = label;
+    b.onclick = fn;
+    row.appendChild(b);
+  }
+  if (!$("dlg").open) $("dlg").showModal();
+}
+const closeDialog = () => $("dlg").open && $("dlg").close();
+
+// ---- actions ---------------------------------------------------------------
+$("b-tare").onclick = () => {
+  dialog("Tare all pads?", "Take everything off the pads first. Each pad zeroes once its reading settles.", [
+    ["Cancel", closeDialog],
+    ["Tare", () => { send("tare all"); closeDialog(); }, true],
+  ]);
+};
+
+$("b-assign").onclick = () => {
+  if (!frame || !frame.pads.length) return;
+  assign = { corners: [...CORNERS] };
+  stepAssign();
+};
+
+// The page finds the pressed pad itself (every pad's weight is in each frame)
+// and sends an explicit `assign CORNER NAME`, so re-pressing a pad that is
+// already right works too.
+function stepAssign() {
+  const c = assign.corners[0];
+  if (!c) {
+    assign = null;
+    dialog("Corners assigned", "Check the corners match the car, then tare.", [["Done", closeDialog, true]]);
+    return;
+  }
+  assign.baselines = Object.fromEntries(frame.pads.map((p) => [p.name, p.kg ?? 0]));
+  assign.warned = false;
+  dialog(`Assign ${c}`, `Press firmly on the pad under the ${WHEEL[c]} wheel.`, [
+    ["Stop", () => { assign = null; closeDialog(); }],
+    ["Skip", () => { assign.corners.shift(); stepAssign(); }, true],
+  ]);
+  if (mock) mockPress(c);
+}
+
+function checkPress() {
+  const pressed = frame.pads.filter((p) => p.kg !== null && p.kg - (assign.baselines[p.name] ?? p.kg) >= PRESS_KG);
+  if (pressed.length > 1 && !assign.warned) {
+    assign.warned = true;
+    $("dlg-text").textContent = "More than one pad is pressed: press only one.";
+  }
+  if (pressed.length !== 1) return;
+  const c = assign.corners.shift();
+  send(`assign ${c} ${pressed[0].name}`);
+  send(`blink ${pressed[0].name}`);
+  stepAssign();
+}
+
+$("b-log").onclick = () => {
+  if (!log) {
+    log = [];
+    $("b-log").textContent = "Stop log";
+    $("b-log").classList.add("rec");
+    return;
+  }
+  const rows = [["time", ...CORNERS.map((c) => c + "_kg"), "total_kg", "cross_pct"], ...log];
+  const blob = new Blob([rows.map((r) => r.join(",")).join("\n") + "\n"], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `corner-weights-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  log = null;
+  $("b-log").textContent = "Log CSV";
+  $("b-log").classList.remove("rec");
+};
+
+// ---- connection ------------------------------------------------------------
+let ws = null;
+function setLink(state, text) {
+  $("link-dot").className = "dot " + state;
+  $("link-text").textContent = text;
+}
+
+function onFrame(f) {
+  if (f.v !== 1 || f.type !== "weights") return;
+  frame = f;
+  lastFrameAt = Date.now();
+  render();
+}
+
+function send(cmd) {
+  if (mock) return mockCommand(cmd);
+  if (ws && ws.readyState === 1) ws.send(cmd);
+}
+
+function connect() {
+  setLink("warn", "connecting…");
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setLink("ok", "live");
+  ws.onmessage = (e) => { try { onFrame(JSON.parse(e.data)); } catch (_) { /* not a frame */ } };
+  ws.onclose = () => { setLink("bad", "reconnecting…"); setTimeout(connect, 1500); };
+}
+
+setInterval(() => {
+  if (!mock && ws && ws.readyState === 1 && Date.now() - lastFrameAt > 2500) setLink("warn", "no data");
+}, 1000);
+
+// ---- mock data (file:// or ?mock) -----------------------------------------
+let mockPads, mockAssign = null;
+function mockStart() {
+  setLink("ok", "mock data");
+  mockPads = [
+    { name: "9a91a8", home: "LF", corner: "LF", base: 312.4, tare: 0, press: 0 },
+    { name: "9a971c", home: "RF", corner: "LR", base: 298.1, tare: 0, press: 0 },
+    { name: "4c11e0", home: "LR", corner: null, base: 251.0, tare: 0, press: 0 },
+    { name: "77b2d4", home: "RR", corner: "RR", base: 266.9, tare: 0, press: 0 },
+    { name: "a0c3f1", home: null, corner: null, base: 0.2, tare: 0, press: 0 },
+  ];
+  let t = 0;
+  setInterval(() => {
+    t += 200;
+    onFrame({ v: 1, type: "weights", t_ms: t, pads: mockPads.map((p, i) => ({
+      name: p.name, corner: p.corner, kg: +(p.base - p.tare + p.press + Math.sin(t / 900 + i) * 0.04).toFixed(3),
+      stable: Math.sin(t / 3000 + i) > -0.7, calibrated: true, age_ms: i * 20 })) });
+  }, 200);
+}
+function mockCommand(cmd) {
+  const [w, a, b] = cmd.split(" ");
+  if (w === "tare") mockPads.forEach((p) => (p.tare = p.base));
+  if (w === "assign" && b) {
+    mockPads.forEach((p) => p.corner === a && (p.corner = null));
+    const pad = mockPads.find((p) => p.name === b);
+    if (pad) pad.corner = a;
+  }
+}
+// Pretend someone presses the right pad for a moment.
+function mockPress(corner) {
+  clearTimeout(mockAssign);
+  mockAssign = setTimeout(() => {
+    const pad = mockPads.find((p) => p.home === corner);
+    if (!pad) return;
+    pad.press = 20;
+    setTimeout(() => (pad.press = 0), 1500);
+  }, 1200);
+}
+
+if (mock) mockStart(); else connect();
+</script>
+</body>
+</html>
