@@ -1,0 +1,46 @@
+# Dependabot version updates. Each ecosystem puts its minor and patch bumps in
+# one weekly PR. Major bumps open their own PRs, since they're the ones likely
+# to need code changes.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # Host crates (cargo workspace, stable Rust).
+  - package-ecosystem: cargo
+    directory: /firmware
+    schedule:
+      interval: weekly
+    groups:
+      host-minor-patch:
+        update-types: [minor, patch]
+
+  # Pad firmware (its own package and Cargo.lock, outside the workspace).
+  - package-ecosystem: cargo
+    directory: /firmware/pad
+    schedule:
+      interval: weekly
+    # rust-toolchain.toml selects the `esp` toolchain, which only exists where
+    # `espup install` has run. Dependabot copies that file next to Cargo.toml
+    # before running cargo, so rustup would look for `esp` and the update would
+    # fail. Updating Cargo.lock only needs cargo, not the Xtensa compiler, so
+    # skip the file. Dependabot renames rust-toolchain.toml to rust-toolchain
+    # internally, so both names are listed. If the pad updates still fail, check
+    # the Dependabot job log (Insights > Dependency graph > Dependabot).
+    exclude-paths:
+      - rust-toolchain
+      - rust-toolchain.toml
+    groups:
+      pad-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # esp-radio is pinned to =1.0.0-beta.1 on purpose (see Cargo.toml): a new
+      # pre-release can change the API, and it's released in step with esp-hal
+      # and esp-rtos (which depends on it). Bump it by hand.
+      - dependency-name: esp-radio
