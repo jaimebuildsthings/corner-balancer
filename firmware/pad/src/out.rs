@@ -60,13 +60,36 @@ impl fmt::Write for Buf {
     }
 }
 
-/// Formats one line (adding `\r\n`) and writes it.
+/// Writes one complete line of output. If the user is part-way through typing
+/// a command, the half-typed line is cleared first and redrawn after, so the
+/// message never lands in the middle of it.
+pub async fn line(text: &[u8]) {
+    const CLEAR_LINE: &[u8] = b"\r\x1b[K";
+    let mut out = [0u8; 256 + 2 + 3 + crate::console::LINE_MAX];
+    let mut n = 0;
+    let mut push = |bytes: &[u8]| {
+        let k = bytes.len().min(out.len() - n);
+        out[n..n + k].copy_from_slice(&bytes[..k]);
+        n += k;
+    };
+    let partial = crate::console::visible_partial();
+    if partial.is_some() {
+        push(CLEAR_LINE);
+    }
+    push(text);
+    push(b"\r\n");
+    if let Some(p) = &partial {
+        push(p.as_bytes());
+    }
+    write(&out[..n]).await;
+}
+
+/// Formats one line and writes it with [`line`].
 macro_rules! say {
     ($($arg:tt)*) => {{
         let mut buf = $crate::out::Buf::new();
         let _ = core::fmt::Write::write_fmt(&mut buf, format_args!($($arg)*));
-        let _ = core::fmt::Write::write_str(&mut buf, "\r\n");
-        $crate::out::write(buf.as_bytes()).await;
+        $crate::out::line(buf.as_bytes()).await;
     }};
 }
 pub(crate) use say;
