@@ -2,17 +2,21 @@
 //!
 //! Core 1 samples the HX711 load cell amplifiers; core 0 filters, runs the
 //! serial console and bench tests, reads the temperature probe, and exchanges
-//! readings with other pads over ESP-NOW. The phone UI comes next (phase 1b).
+//! readings with other pads over ESP-NOW. A pad set to `host` also runs its own
+//! Wi-Fi network with the web UI (see `web.rs`).
 //!
 //! The console runs on UART0: the board's "UART"/"COM" USB port.
 
 #![no_std]
 #![no_main]
+// picoserve's app builder names its router type with `impl Trait`.
+#![feature(impl_trait_in_assoc_type)]
 
 #[cfg(all(feature = "esp32s3", feature = "esp32"))]
 compile_error!("enable exactly one chip feature: `esp32s3` (default) or `esp32`");
 
 mod app;
+mod button;
 mod calib_store;
 mod console;
 mod led;
@@ -21,6 +25,7 @@ mod out;
 mod pads;
 mod sampler;
 mod temperature;
+mod web;
 
 use embassy_executor::Spawner;
 use esp_hal::clock::CpuClock;
@@ -89,18 +94,42 @@ async fn main(spawner: Spawner) {
     let mut mac = [0u8; 6];
     mac.copy_from_slice(esp_hal::efuse::base_mac_address().as_bytes());
 
-    let wifi = esp_radio::wifi::WifiController::new(p.WIFI, Default::default()).expect("Wi-Fi init");
-    let esp_now = wifi.esp_now();
-    esp_now.set_channel(link::CHANNEL).expect("ESP-NOW channel");
-    let (_manager, tx, rx) = esp_now.split();
-    // ESP-NOW keeps the radio running after the controller is dropped.
-    drop(wifi);
-    spawner.spawn(link::sender(tx).expect("ESP-NOW sender"));
-    spawner.spawn(link::receiver(rx).expect("ESP-NOW receiver"));
-
+    // Settings decide whether this pad runs the Wi-Fi network, so load them first.
     // Writes park core 1 for the few milliseconds a sector erase takes.
     let flash = FlashStorage::new(p.FLASH).multicore_auto_park();
-    let store = calib_store::CalibStore::open(flash).ok();
+    let mut store = calib_store::CalibStore::open(flash).ok();
+    let stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
+
+    let (wifi, web_device) = if stored.host {
+        use esp_radio::wifi::{Config, ControllerConfig, Interface, ap::AccessPointConfig, sta::StationConfig};
+        let ssid = web::ssid(&mac);
+        // Access point plus an idle station: ESP-NOW uses the station side on the AP's channel.
+        let ap = AccessPointConfig::default()
+            .with_ssid(ssid.as_str().try_into().expect("SSID fits"))
+            .with_channel(link::CHANNEL);
+        let config =
+            ControllerConfig::default().with_initial_config(Config::AccessPointStation(StationConfig::default(), ap));
+        let wifi = esp_radio::wifi::WifiController::new(p.WIFI, config).expect("Wi-Fi init");
+        (wifi, Some(Interface::access_point()))
+    } else {
+        (esp_radio::wifi::WifiController::new(p.WIFI, Default::default()).expect("Wi-Fi init"), None)
+    };
+    let esp_now = wifi.esp_now();
+    if web_device.is_none() {
+        esp_now.set_channel(link::CHANNEL).expect("ESP-NOW channel");
+    }
+    let (_manager, tx, rx) = esp_now.split();
+    spawner.spawn(link::sender(tx).expect("ESP-NOW sender"));
+    spawner.spawn(link::receiver(rx).expect("ESP-NOW receiver"));
+    match web_device {
+        Some(device) => {
+            let rng = esp_hal::rng::Rng::new();
+            let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
+            web::start(spawner, wifi, device, seed);
+        }
+        // ESP-NOW keeps the radio running after the controller is dropped.
+        None => drop(wifi),
+    }
 
     // HX711 DOUT is pulled up so a disconnected amplifier reads as "never ready".
     #[cfg(not(feature = "sim"))]
@@ -118,8 +147,8 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "sim")]
     let _unused_hx711_pins = (hx_dout, hx_sck);
     // BOOT (GPIO0 on both chips) is a plain input once the chip is running.
-    #[cfg(feature = "sim")]
-    let boot_button = esp_hal::gpio::Input::new(p.GPIO0, esp_hal::gpio::InputConfig::default().with_pull(Pull::Up));
+    let boot = esp_hal::gpio::Input::new(p.GPIO0, esp_hal::gpio::InputConfig::default().with_pull(Pull::Up));
+    spawner.spawn(button::task(boot).expect("button task"));
 
     static CORE1_STACK: StaticCell<Stack<8192>> = StaticCell::new();
     esp_rtos::start_second_core(p.CPU_CTRL, p.FROM_CPU_INTR1, CORE1_STACK.init(Stack::new()), move || {
@@ -128,9 +157,9 @@ async fn main(spawner: Spawner) {
             #[cfg(not(feature = "sim"))]
             spawner.spawn(sampler::hx711_task(0, amp).expect("hx711 task"));
             #[cfg(feature = "sim")]
-            spawner.spawn(sampler::sim_task(0, boot_button).expect("sim task"));
+            spawner.spawn(sampler::sim_task(0).expect("sim task"));
         });
     });
 
-    app::App::new(1, store, mac).run().await
+    app::App::new(1, store, stored, mac).run().await
 }
