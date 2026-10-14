@@ -479,15 +479,17 @@ impl App {
         remote.stats.record(heard.msg.seq, heard.t_ms);
     }
 
-    /// Every pad's latest weight, this one included; `None` if unheard or stale.
+    /// Every pad's latest weight, this one included; `None` if unheard, stale
+    /// or uncalibrated (an uncalibrated pad reports counts, not kg).
     fn fresh_weights(&self, now_ms: u64) -> [Option<f32>; PADS] {
         core::array::from_fn(|id| {
             if id == usize::from(self.pad_id) {
-                self.channels[0].as_ref().and_then(|c| c.last).map(|r| r.kg)
+                let chan = self.channels[0].as_ref().filter(|c| c.calibrated)?;
+                chan.last.map(|r| r.kg)
             } else {
                 self.remotes[id]
                     .as_ref()
-                    .filter(|p| p.stats.age_ms(now_ms).is_some_and(|age| age <= STALE_MS))
+                    .filter(|p| p.msg.calibrated && p.stats.age_ms(now_ms).is_some_and(|age| age <= STALE_MS))
                     .map(|p| p.msg.kg)
             }
         })
@@ -498,8 +500,13 @@ impl App {
         say!("pad        kg  stable    age  received  lost %  max gap");
         for id in 0..PADS {
             if id == usize::from(self.pad_id) {
-                match self.channels[0].as_ref().and_then(|c| c.last) {
-                    Some(r) => say!("{id}* {:>10.3}  {:<6}  (this pad)", r.kg, yes_no(r.stable)),
+                match self.channels[0].as_ref().and_then(|c| c.last.map(|r| (r, c.calibrated))) {
+                    Some((r, calibrated)) => say!(
+                        "{id}* {:>10.3}  {:<6}  (this pad){}",
+                        r.kg,
+                        yes_no(r.stable),
+                        if calibrated { "" } else { "  UNCALIBRATED: counts" }
+                    ),
                     None => say!("{id}*  (this pad, no readings yet)"),
                 }
                 continue;
@@ -507,14 +514,15 @@ impl App {
             let Some(p) = &self.remotes[id] else { continue };
             let age = p.stats.age_ms(now).unwrap_or(0);
             say!(
-                "{id}  {:>10.3}  {:<6} {:>5.1}s  {:>8}  {:>6.2}  {:>5.2}s{}",
+                "{id}  {:>10.3}  {:<6} {:>5.1}s  {:>8}  {:>6.2}  {:>5.2}s{}{}",
                 p.msg.kg,
                 yes_no(p.msg.stable),
                 age as f32 / 1000.0,
                 p.stats.received,
                 p.stats.loss_pct().unwrap_or(0.0),
                 p.stats.max_gap_ms as f32 / 1000.0,
-                if age > STALE_MS { "  STALE" } else { "" }
+                if age > STALE_MS { "  STALE" } else { "" },
+                if p.msg.calibrated { "" } else { "  UNCALIBRATED: counts" }
             );
         }
         let w = self.fresh_weights(now);
@@ -534,7 +542,7 @@ impl App {
                 Some(pct) => say!("total {:.3} kg  pad 1 carries {:.2} %", a + b, pct),
                 None => say!("total {:.3} kg", a + b),
             },
-            _ => {}
+            _ => say!("(totals need pads 0+1 or all four: heard, fresh and calibrated)"),
         }
     }
 
