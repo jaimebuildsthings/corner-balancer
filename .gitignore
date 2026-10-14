@@ -1,0 +1,15 @@
+# Rust
+target/
+
+# Test runs and captures
+*.log
+runs/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local Claude Code settings
+.claude/settings.local.json
