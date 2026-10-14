@@ -40,6 +40,8 @@ Send `json on` and the pad prints a frame 5×/s:
 
 Corner math is left to the app: total, front %, left %, cross = (LF + RR) / total.
 
+If two pads report the same `corner` (one was off when the corner was reassigned), treat that corner as unknown and ask the user to run `assign` again; the firmware does the same in its totals.
+
 Other serial output (console replies, CSV) shares the port. **Parse only lines that start with `{`.**
 
 ## Commands

@@ -58,6 +58,8 @@ pub struct App {
     fresh: u32,
     store: Option<CalibStore>,
     pads: Pads,
+    /// Corner last reported as claimed by another pad too, so the warning prints once.
+    warned_conflict: Option<Corner>,
 }
 
 impl App {
@@ -90,6 +92,7 @@ impl App {
             fresh: 0,
             store,
             pads: Pads::new(mac, stored.corner),
+            warned_conflict: None,
         }
     }
 
@@ -577,6 +580,16 @@ impl App {
         match incoming {
             Incoming::Reading { src, msg, t_ms } => {
                 self.pads.heard(src, msg, t_ms);
+                let clash = msg.corner.is_some() && msg.corner == self.pads.corner;
+                if clash && self.warned_conflict != msg.corner {
+                    self.warned_conflict = msg.corner;
+                    say!(
+                        "warning: pad {} also claims {}; run `assign {}` to settle it",
+                        PadName::from_mac(&src),
+                        corner_label(msg.corner),
+                        corner_label(msg.corner)
+                    );
+                }
             }
             Incoming::Command { src, msg } => {
                 if !self.pads.dedup.first_time(&src, msg.id) {
@@ -602,18 +615,29 @@ impl App {
         }
     }
 
+    /// How many fresh pads (this one included) claim each corner.
+    fn corner_claims(&self, now_ms: u64) -> [u8; 4] {
+        let mut claims = [0u8; 4];
+        let corners = core::iter::once(self.pads.corner).chain(self.pads.fresh_remotes(now_ms).map(|p| p.msg.corner));
+        for c in corners.flatten() {
+            claims[usize::from(c.index())] += 1;
+        }
+        claims
+    }
+
     /// Latest weight per corner from fresh, calibrated pads (this one included),
-    /// and whether all of those are stable.
+    /// and whether all of those are stable. A corner claimed by two pads is
+    /// left out: there is no way to know which reading is right.
     fn corner_weights(&self, now_ms: u64) -> ([Option<f32>; 4], bool) {
+        let claims = self.corner_claims(now_ms);
         let mut w = [None; 4];
         let mut all_stable = true;
         let mut put = |corner: Option<Corner>, kg: f32, stable: bool| {
-            if let Some(c) = corner {
-                let slot = &mut w[usize::from(c.index())];
-                if slot.is_none() {
-                    *slot = Some(kg);
-                    all_stable &= stable;
-                }
+            if let Some(c) = corner
+                && claims[usize::from(c.index())] == 1
+            {
+                w[usize::from(c.index())] = Some(kg);
+                all_stable &= stable;
             }
         };
         if let Some((r, true)) = self.own_reading() {
@@ -688,6 +712,11 @@ impl App {
                 if p.is_fresh(now) { "" } else { "  STALE" },
                 uncal(p.msg.calibrated)
             );
+        }
+        for (c, n) in Corner::ALL.into_iter().zip(self.corner_claims(now)) {
+            if n > 1 {
+                say!("CONFLICT: {n} pads claim {}; left out of totals. Fix with `assign {}`.", c.name(), c.name());
+            }
         }
         let (w, all_stable) = self.corner_weights(now);
         let settling = if all_stable { "" } else { "  (settling)" };
