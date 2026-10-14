@@ -1,0 +1,8 @@
+# Fits 4 MB flash (original ESP32 boards) and up (ESP32-S3 N16R8).
+# Name,   Type, SubType,   Offset,   Size
+nvs,      data, nvs,       0x9000,   0x5000
+otadata,  data, ota,       0xe000,   0x2000
+ota_0,    app,  ota_0,     0x10000,  0x1C0000
+ota_1,    app,  ota_1,     0x1D0000, 0x1C0000
+# Two 4 KB slots for the pad's calibration; never touched by app updates.
+calib,    data, undefined, 0x390000, 0x2000

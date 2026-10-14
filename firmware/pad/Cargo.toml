@@ -1,0 +1,61 @@
+[package]
+name = "pad"
+description = "Firmware for one corner-scale pad (ESP32-S3 or ESP32)"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/jaimebuildsthings/corner-balancer"
+publish = false
+
+[[bin]]
+name = "pad"
+path = "src/main.rs"
+test = false
+bench = false
+
+[features]
+default = ["esp32s3"]
+# Exactly one chip feature. The original ESP32 build is for bench work on spare boards.
+esp32s3 = [
+  "esp-hal/esp32s3",
+  "esp-rtos/esp32s3",
+  "esp-bootloader-esp-idf/esp32s3",
+  "esp-println/esp32s3",
+  "esp-storage/esp32s3",
+]
+esp32 = [
+  "esp-hal/esp32",
+  "esp-rtos/esp32",
+  "esp-bootloader-esp-idf/esp32",
+  "esp-println/esp32",
+  "esp-storage/esp32",
+]
+# Replace the HX711 with simulated readings, for boards without load cells.
+sim = []
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy"] }
+esp-bootloader-esp-idf = "0.6.0"
+esp-println = "0.18.0"
+esp-storage = "0.10.0"
+embassy-executor = "0.10.0"
+embassy-time = "0.5.0"
+embassy-sync = "0.8.0"
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+
+ds18b20 = { path = "../crates/ds18b20" }
+hx711 = { path = "../crates/hx711" }
+protocol = { path = "../crates/protocol" }
+scale = { path = "../crates/scale" }
+
+[profile.dev]
+# Unoptimized builds are too slow and too big for the chip.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"

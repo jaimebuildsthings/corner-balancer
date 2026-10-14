@@ -1,0 +1,4 @@
+# Espressif's Rust fork, needed for the Xtensa cores of the ESP32 and ESP32-S3.
+# Install with `espup install`, then `source ~/export-esp.sh` before building.
+[toolchain]
+channel = "esp"

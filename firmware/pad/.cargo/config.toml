@@ -1,0 +1,17 @@
+[build]
+target = "xtensa-esp32s3-none-elf"
+rustflags = ["-C", "link-arg=-nostartfiles", "-C", "link-arg=-Wl,--no-warn-rwx-segments"]
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --chip esp32s3 --partition-table partitions.csv"
+
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor --chip esp32 --partition-table partitions.csv"
+
+[alias]
+# Original ESP32 boards. Append `--features sim` for a board without load cells.
+esp32-build = "build --release --target xtensa-esp32-none-elf --no-default-features --features esp32"
+esp32-run = "run --release --target xtensa-esp32-none-elf --no-default-features --features esp32"
+
+[unstable]
+build-std = ["core"]
