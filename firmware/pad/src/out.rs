@@ -33,16 +33,19 @@ pub async fn write(bytes: &[u8]) {
     PIPE.write_all(bytes).await;
 }
 
+/// Longest output line; a four-pad JSON frame is under 480 bytes.
+const LINE_CAP: usize = 512;
+
 /// A fixed-size line buffer; text past its capacity is dropped.
 pub struct Buf {
-    data: [u8; 256],
+    data: [u8; LINE_CAP],
     len: usize,
 }
 
 impl Buf {
     /// An empty buffer.
     pub const fn new() -> Self {
-        Self { data: [0; 256], len: 0 }
+        Self { data: [0; LINE_CAP], len: 0 }
     }
 
     /// The buffered bytes.
@@ -65,7 +68,7 @@ impl fmt::Write for Buf {
 /// message never lands in the middle of it.
 pub async fn line(text: &[u8]) {
     const CLEAR_LINE: &[u8] = b"\r\x1b[K";
-    let mut out = [0u8; 256 + 2 + 3 + crate::console::LINE_MAX];
+    let mut out = [0u8; LINE_CAP + 2 + 3 + crate::console::LINE_MAX];
     let mut n = 0;
     let mut push = |bytes: &[u8]| {
         let k = bytes.len().min(out.len() - n);

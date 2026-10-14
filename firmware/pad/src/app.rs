@@ -6,6 +6,7 @@ use core::sync::atomic::Ordering;
 use embassy_time::{Duration, Instant, with_timeout};
 use protocol::command::{HELP, MAX_PAD_ID};
 use protocol::csv;
+use protocol::json::{self, PadReading};
 use protocol::link::LinkStats;
 use protocol::{Command, PadMsg, ParseError};
 use scale::bench::{CreepTest, NoiseTest, PlaceEvent, PlaceRemoveTest, Targets};
@@ -25,6 +26,9 @@ const DEFAULT_FULL_SCALE_KG: f32 = 200.0;
 const STALE_MS: u64 = 2_000;
 
 const PADS: usize = MAX_PAD_ID as usize + 1;
+
+/// Interval between scales-protocol frames.
+const JSON_INTERVAL_MS: u64 = 200;
 
 /// The latest reading from another pad and how well its link is doing.
 struct RemotePad {
@@ -53,6 +57,8 @@ pub struct App {
     selected: usize,
     full_scale_kg: f32,
     stream: bool,
+    json: bool,
+    last_json_ms: u64,
     test: Option<Test>,
     pending_cal_kg: Option<f32>,
     pending_tare: bool,
@@ -87,6 +93,8 @@ impl App {
             selected: 0,
             full_scale_kg: DEFAULT_FULL_SCALE_KG,
             stream: false,
+            json: false,
+            last_json_ms: 0,
             test: None,
             pending_cal_kg: None,
             pending_tare: false,
@@ -119,6 +127,11 @@ impl App {
             }
             while let Ok(line) = LINES.try_receive() {
                 self.on_line(line.as_str()).await;
+            }
+            let now = Instant::now().as_millis();
+            if self.json && now.saturating_sub(self.last_json_ms) >= JSON_INTERVAL_MS {
+                self.last_json_ms = now;
+                self.send_json(now).await;
             }
         }
     }
@@ -306,9 +319,13 @@ impl App {
                 self.full_scale_kg = kg;
                 say!("full scale {kg} kg");
             }
+            Command::Json(on) => {
+                self.json = on;
+                crate::console::QUIET.store(self.stream || self.json, Ordering::Relaxed);
+            }
             Command::Stream(on) => {
                 self.stream = on;
-                crate::console::QUIET.store(on, Ordering::Relaxed);
+                crate::console::QUIET.store(self.stream || self.json, Ordering::Relaxed);
                 if on {
                     say!("{}", csv::HEADER);
                 }
@@ -498,6 +515,43 @@ impl App {
             Some(kg)
         });
         (weights, all_stable)
+    }
+
+    /// One scales-protocol frame: this pad plus every other pad heard recently.
+    async fn send_json(&self, now_ms: u64) {
+        let mut pads = [PadReading { id: 0, kg: 0.0, stable: false, calibrated: false, age_ms: 0 }; PADS];
+        let mut n = 0;
+        for id in 0..PADS {
+            let reading = if id == usize::from(self.pad_id) {
+                self.channels[0].as_ref().and_then(|c| {
+                    c.last.map(|r| PadReading {
+                        id: id as u8,
+                        kg: r.kg,
+                        stable: r.stable,
+                        calibrated: c.calibrated,
+                        age_ms: 0,
+                    })
+                })
+            } else {
+                self.remotes[id].as_ref().and_then(|p| {
+                    let age_ms = p.stats.age_ms(now_ms)?;
+                    (age_ms <= STALE_MS).then_some(PadReading {
+                        id: id as u8,
+                        kg: p.msg.kg,
+                        stable: p.msg.stable,
+                        calibrated: p.msg.calibrated,
+                        age_ms,
+                    })
+                })
+            };
+            if let Some(r) = reading {
+                pads[n] = r;
+                n += 1;
+            }
+        }
+        let mut buf = crate::out::Buf::new();
+        let _ = json::write_weights(&mut buf, now_ms, &pads[..n]);
+        crate::out::line(buf.as_bytes()).await;
     }
 
     async fn show_pads(&self) {
