@@ -1,6 +1,6 @@
 # DIY Corner Scales — Prototype Plan
 
-Oct 6, 2026 · @Jaime
+Oct 6, 2026 · @jaimebuildsthings
 
 ## Goal and approach
 
