@@ -4,37 +4,29 @@
 use core::sync::atomic::Ordering;
 
 use embassy_time::{Duration, Instant, with_timeout};
-use protocol::command::{HELP, MAX_PAD_ID};
+use protocol::assign::Press;
+use protocol::cmd_msg::{Cmd, Target};
+use protocol::command::{HELP, Who};
 use protocol::csv;
 use protocol::json::{self, PadReading};
-use protocol::link::LinkStats;
-use protocol::{Command, PadMsg, ParseError};
+use protocol::pad::{Corner, PadName};
+use protocol::{Command, ParseError};
 use scale::bench::{CreepTest, NoiseTest, PlaceEvent, PlaceRemoveTest, Targets};
 use scale::{CalPoint, Calibration, FilterConfig, Fit, Reading, Scale};
 
 use crate::calib_store::CalibStore;
 use crate::console::LINES;
-use crate::link::{Heard, INBOX, OUTBOX};
+use crate::link::{INBOX, Incoming, OUTBOX, Outgoing};
 use crate::out::say;
+use crate::pads::{ASSIGN_TIMEOUT_MS, Pads};
 use crate::sampler::{DROPPED, SAMPLES, Sample};
 use crate::{MAX_CHANNELS, temperature};
 
 /// Default full-scale rating for pass targets: the phase 1 bench pad.
 const DEFAULT_FULL_SCALE_KG: f32 = 200.0;
 
-/// A pad not heard from for this long is shown as stale and left out of totals.
-const STALE_MS: u64 = 2_000;
-
-const PADS: usize = MAX_PAD_ID as usize + 1;
-
 /// Interval between scales-protocol frames.
 const JSON_INTERVAL_MS: u64 = 200;
-
-/// The latest reading from another pad and how well its link is doing.
-struct RemotePad {
-    msg: PadMsg,
-    stats: LinkStats,
-}
 
 struct Channel {
     scale: Scale,
@@ -65,15 +57,12 @@ pub struct App {
     /// Readings on the selected channel since the last `cal add` or `test zero`.
     fresh: u32,
     store: Option<CalibStore>,
-    pad_id: u8,
-    seq: u32,
-    remotes: [Option<RemotePad>; PADS],
-    warned_duplicate_id: bool,
+    pads: Pads,
 }
 
 impl App {
     /// `active` channels get a scale, using the stored calibration where there is one.
-    pub fn new(active: usize, mut store: Option<CalibStore>) -> Self {
+    pub fn new(active: usize, mut store: Option<CalibStore>, mac: [u8; 6]) -> Self {
         let stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
         let channels = core::array::from_fn(|i| {
             (i < active).then(|| {
@@ -100,20 +89,18 @@ impl App {
             pending_tare: false,
             fresh: 0,
             store,
-            pad_id: stored.pad_id.min(MAX_PAD_ID),
-            seq: 0,
-            remotes: Default::default(),
-            warned_duplicate_id: false,
+            pads: Pads::new(mac, stored.corner),
         }
     }
 
     /// Runs forever: handles samples as they arrive and console lines in between.
     pub async fn run(mut self) -> ! {
         say!(
-            "corner-balancer pad {} ({}), pad id {}. Type `help`.",
+            "corner-balancer {} ({}): pad {}, corner {}. Type `help`.",
             env!("CARGO_PKG_VERSION"),
             crate::CHIP,
-            self.pad_id
+            self.pads.name(),
+            corner_label(self.pads.corner)
         );
         if self.store.is_none() {
             say!("warning: no `calib` partition; calibration can't be saved. Flash with partitions.csv.");
@@ -122,13 +109,14 @@ impl App {
             if let Ok(sample) = with_timeout(Duration::from_millis(50), SAMPLES.receive()).await {
                 self.on_sample(sample).await;
             }
-            while let Ok(heard) = INBOX.try_receive() {
-                self.on_heard(heard).await;
+            while let Ok(incoming) = INBOX.try_receive() {
+                self.on_incoming(incoming).await;
             }
             while let Ok(line) = LINES.try_receive() {
                 self.on_line(line.as_str()).await;
             }
             let now = Instant::now().as_millis();
+            self.check_assign(now).await;
             if self.json && now.saturating_sub(self.last_json_ms) >= JSON_INTERVAL_MS {
                 self.last_json_ms = now;
                 self.send_json(now).await;
@@ -148,17 +136,8 @@ impl App {
         chan.last = Some(r);
         if ch == 0 {
             // Channel 0 is this pad's reading for the other pads.
-            let msg = PadMsg {
-                pad_id: self.pad_id,
-                seq: self.seq,
-                kg: r.kg,
-                raw: r.raw,
-                stable: r.stable,
-                calibrated: chan.calibrated,
-                temp_c: temperature::latest(),
-            };
-            self.seq = self.seq.wrapping_add(1);
-            let _ = OUTBOX.try_send(msg);
+            let msg = self.pads.reading(r.kg, r.raw, r.stable, chan.calibrated, temperature::latest());
+            let _ = OUTBOX.try_send(Outgoing::Reading(msg));
         }
         if self.stream {
             let row = csv::Row {
@@ -330,10 +309,11 @@ impl App {
                     say!("{}", csv::HEADER);
                 }
             }
-            Command::Tare => {
-                self.pending_tare = true;
-                self.fresh = 0;
-                say!("tare: waiting for a stable reading...");
+            Command::Tare => self.request_tare().await,
+            Command::TareAll => {
+                self.request_tare().await;
+                self.send(Target::All, Cmd::Tare);
+                say!("tare: sent to every pad");
             }
             Command::CalAdd(kg) => {
                 self.pending_cal_kg = Some(kg);
@@ -387,21 +367,46 @@ impl App {
                 #[cfg(not(feature = "sim"))]
                 say!("error: `sim` needs a simulator build (--features sim); ignoring {kg} kg");
             }
-            Command::Id(id) => {
-                self.pad_id = id;
-                self.seq = 0;
-                self.warned_duplicate_id = false;
-                match self.store.as_mut().map(|s| s.save_pad_id(id)) {
-                    Some(Ok(())) => say!("pad id {id} (saved)"),
-                    Some(Err(e)) => say!("pad id {id}, but saving failed: {e:?}"),
-                    None => say!("pad id {id} (not saved: no calib partition)"),
-                }
-            }
             Command::Pads => self.show_pads().await,
             Command::PadsReset => {
-                self.remotes.iter_mut().flatten().for_each(|p| p.stats.reset_counters());
+                self.pads.remotes.iter_mut().flatten().for_each(|p| p.stats.reset_counters());
                 say!("link counters cleared");
             }
+            Command::AssignPress(corner) => {
+                let own = self.own_reading().map(|(r, _)| r.kg);
+                self.pads.start_assign(corner, Instant::now().as_millis(), own);
+                say!(
+                    "assign {}: press firmly on the pad under the {} wheel ({} s; `assign stop` cancels)",
+                    corner.name(),
+                    wheel(corner),
+                    ASSIGN_TIMEOUT_MS / 1000
+                );
+            }
+            Command::AssignStop => {
+                self.pads.assigning = None;
+                say!("assign: cancelled");
+            }
+            Command::AssignTo(corner, who) => {
+                if let Some(mac) = self.resolve(who).await {
+                    self.assign(mac, Some(corner)).await;
+                }
+            }
+            Command::Unassign(who) => {
+                if let Some(mac) = self.resolve(who).await {
+                    self.assign(mac, None).await;
+                }
+            }
+            Command::Blink(who) => match self.resolve(who).await {
+                Some(mac) if mac == self.pads.mac => {
+                    crate::led::BLINK.signal(());
+                    say!("blinking this pad");
+                }
+                Some(mac) => {
+                    self.send(Target::Pad(mac), Cmd::Blink);
+                    say!("blinking pad {}", PadName::from_mac(&mac));
+                }
+                None => {}
+            },
             Command::TestStop => {
                 self.test = None;
                 self.pending_cal_kg = None;
@@ -417,7 +422,13 @@ impl App {
     }
 
     async fn status(&self) {
-        say!("firmware {} on {}; pad id {}", env!("CARGO_PKG_VERSION"), crate::CHIP, self.pad_id);
+        say!(
+            "firmware {} on {}; pad {}, corner {}",
+            env!("CARGO_PKG_VERSION"),
+            crate::CHIP,
+            self.pads.name(),
+            corner_label(self.pads.corner)
+        );
         say!("full scale {} kg; dropped samples {}", self.full_scale_kg, DROPPED.load(Ordering::Relaxed));
         match temperature::latest() {
             Some(t) => say!("temperature {t:.2} C"),
@@ -481,73 +492,166 @@ impl App {
         }
     }
 
-    async fn on_heard(&mut self, heard: Heard) {
-        let id = heard.msg.pad_id;
-        if id == self.pad_id {
-            if !self.warned_duplicate_id {
-                self.warned_duplicate_id = true;
-                say!("warning: another pad also uses id {id}; give each pad its own with `id N`");
-            }
-            return;
-        }
-        let Some(slot) = self.remotes.get_mut(usize::from(id)) else { return };
-        let remote = slot.get_or_insert(RemotePad { msg: heard.msg, stats: LinkStats::default() });
-        remote.msg = heard.msg;
-        remote.stats.record(heard.msg.seq, heard.t_ms);
+    /// This pad's channel-0 reading and whether it is calibrated.
+    fn own_reading(&self) -> Option<(Reading, bool)> {
+        self.channels[0].as_ref().and_then(|c| c.last.map(|r| (r, c.calibrated)))
     }
 
-    /// Every pad's latest weight, this one included; `None` if unheard, stale
-    /// or uncalibrated (an uncalibrated pad reports counts, not kg).
-    /// Also returns whether all of them are stable.
-    fn fresh_weights(&self, now_ms: u64) -> ([Option<f32>; PADS], bool) {
+    async fn request_tare(&mut self) {
+        self.pending_tare = true;
+        self.fresh = 0;
+        say!("tare: waiting for a stable reading...");
+    }
+
+    /// Queues a command for other pads.
+    fn send(&mut self, target: Target, cmd: Cmd) {
+        let msg = self.pads.command(target, cmd);
+        let _ = OUTBOX.try_send(Outgoing::Command(msg));
+    }
+
+    async fn save_corner(&mut self) {
+        let corner = self.pads.corner;
+        match self.store.as_mut().map(|s| s.save_corner(corner)) {
+            Some(Ok(())) => {}
+            Some(Err(e)) => say!("warning: corner not saved: {e:?}"),
+            None => say!("warning: corner not saved: no calib partition"),
+        }
+    }
+
+    /// Finds a pad named in a command, explaining if it can't.
+    async fn resolve(&self, who: Who) -> Option<[u8; 6]> {
+        let found = self.pads.resolve(who, Instant::now().as_millis());
+        if found.is_none() {
+            match who {
+                Who::Name(name) => say!("error: pad {name} not heard in the last 2 s; see `pads`"),
+                Who::Corner(c) => say!("error: no pad is {} right now; see `pads`", c.name()),
+                Who::This => {}
+            }
+        }
+        found
+    }
+
+    /// Gives `corner` (or none) to the pad `target`, here and on every other pad.
+    async fn assign(&mut self, target: [u8; 6], corner: Option<Corner>) {
+        if self.pads.apply_assign(target, corner) {
+            self.save_corner().await;
+        }
+        // Always broadcast: the target takes the corner and any other holder gives it up.
+        self.send(Target::Pad(target), Cmd::Assign(corner));
+        say!("pad {} is now {}", PadName::from_mac(&target), corner_label(corner));
+    }
+
+    /// Advances a press-to-assign.
+    async fn check_assign(&mut self, now_ms: u64) {
+        let Some(a) = &self.pads.assigning else { return };
+        let corner = a.corner;
+        if now_ms.saturating_sub(a.started_ms) > ASSIGN_TIMEOUT_MS {
+            self.pads.assigning = None;
+            say!("assign {}: no press detected; try again", corner.name());
+            return;
+        }
+        let own = self.own_reading().map(|(r, _)| r.kg);
+        match self.pads.check_assign(now_ms, own) {
+            Press::One(mac) => {
+                self.pads.assigning = None;
+                self.assign(mac, Some(corner)).await;
+                if mac == self.pads.mac {
+                    crate::led::BLINK.signal(());
+                } else {
+                    self.send(Target::Pad(mac), Cmd::Blink);
+                }
+            }
+            Press::Many => {
+                if let Some(a) = self.pads.assigning.as_mut()
+                    && !a.warned_many
+                {
+                    a.warned_many = true;
+                    say!("assign {}: more than one pad pressed; press only one", corner.name());
+                }
+            }
+            Press::None => {}
+        }
+    }
+
+    async fn on_incoming(&mut self, incoming: Incoming) {
+        match incoming {
+            Incoming::Reading { src, msg, t_ms } => {
+                self.pads.heard(src, msg, t_ms);
+            }
+            Incoming::Command { src, msg } => {
+                if !self.pads.dedup.first_time(&src, msg.id) {
+                    return;
+                }
+                let from = PadName::from_mac(&src);
+                match msg.cmd {
+                    Cmd::Assign(corner) => {
+                        let Target::Pad(target) = msg.target else { return };
+                        if self.pads.apply_assign(target, corner) {
+                            self.save_corner().await;
+                            say!("this pad is now {} (set from pad {from})", corner_label(self.pads.corner));
+                        }
+                    }
+                    Cmd::Tare if msg.is_for(&self.pads.mac) => {
+                        say!("tare requested by pad {from}");
+                        self.request_tare().await;
+                    }
+                    Cmd::Blink if msg.is_for(&self.pads.mac) => crate::led::BLINK.signal(()),
+                    Cmd::Tare | Cmd::Blink => {}
+                }
+            }
+        }
+    }
+
+    /// Latest weight per corner from fresh, calibrated pads (this one included),
+    /// and whether all of those are stable.
+    fn corner_weights(&self, now_ms: u64) -> ([Option<f32>; 4], bool) {
+        let mut w = [None; 4];
         let mut all_stable = true;
-        let weights = core::array::from_fn(|id| {
-            let (kg, stable) = if id == usize::from(self.pad_id) {
-                let chan = self.channels[0].as_ref().filter(|c| c.calibrated)?;
-                chan.last.map(|r| (r.kg, r.stable))?
-            } else {
-                self.remotes[id]
-                    .as_ref()
-                    .filter(|p| p.msg.calibrated && p.stats.age_ms(now_ms).is_some_and(|age| age <= STALE_MS))
-                    .map(|p| (p.msg.kg, p.msg.stable))?
-            };
-            all_stable &= stable;
-            Some(kg)
-        });
-        (weights, all_stable)
+        let mut put = |corner: Option<Corner>, kg: f32, stable: bool| {
+            if let Some(c) = corner {
+                let slot = &mut w[usize::from(c.index())];
+                if slot.is_none() {
+                    *slot = Some(kg);
+                    all_stable &= stable;
+                }
+            }
+        };
+        if let Some((r, true)) = self.own_reading() {
+            put(self.pads.corner, r.kg, r.stable);
+        }
+        for p in self.pads.fresh_remotes(now_ms).filter(|p| p.msg.calibrated) {
+            put(p.msg.corner, p.msg.kg, p.msg.stable);
+        }
+        (w, all_stable)
     }
 
     /// One scales-protocol frame: this pad plus every other pad heard recently.
     async fn send_json(&self, now_ms: u64) {
-        let mut pads = [PadReading { id: 0, kg: 0.0, stable: false, calibrated: false, age_ms: 0 }; PADS];
+        let mut pads =
+            [PadReading { name: self.pads.name(), corner: None, kg: 0.0, stable: false, calibrated: false, age_ms: 0 };
+                8];
         let mut n = 0;
-        for id in 0..PADS {
-            let reading = if id == usize::from(self.pad_id) {
-                self.channels[0].as_ref().and_then(|c| {
-                    c.last.map(|r| PadReading {
-                        id: id as u8,
-                        kg: r.kg,
-                        stable: r.stable,
-                        calibrated: c.calibrated,
-                        age_ms: 0,
-                    })
-                })
-            } else {
-                self.remotes[id].as_ref().and_then(|p| {
-                    let age_ms = p.stats.age_ms(now_ms)?;
-                    (age_ms <= STALE_MS).then_some(PadReading {
-                        id: id as u8,
-                        kg: p.msg.kg,
-                        stable: p.msg.stable,
-                        calibrated: p.msg.calibrated,
-                        age_ms,
-                    })
-                })
+        if let Some((r, calibrated)) = self.own_reading() {
+            pads[0] = PadReading {
+                name: self.pads.name(),
+                corner: self.pads.corner,
+                kg: r.kg,
+                stable: r.stable,
+                calibrated,
+                age_ms: 0,
             };
-            if let Some(r) = reading {
-                pads[n] = r;
-                n += 1;
-            }
+            n = 1;
+        }
+        for p in self.pads.fresh_remotes(now_ms).take(pads.len() - n) {
+            pads[n] = PadReading {
+                name: p.name(),
+                corner: p.msg.corner,
+                kg: p.msg.kg,
+                stable: p.msg.stable,
+                calibrated: p.msg.calibrated,
+                age_ms: p.stats.age_ms(now_ms).unwrap_or(0),
+            };
+            n += 1;
         }
         let mut buf = crate::out::Buf::new();
         let _ = json::write_weights(&mut buf, now_ms, &pads[..n]);
@@ -556,38 +660,40 @@ impl App {
 
     async fn show_pads(&self) {
         let now = Instant::now().as_millis();
-        say!("pad        kg  stable    age  received  lost %  max gap");
-        for id in 0..PADS {
-            if id == usize::from(self.pad_id) {
-                match self.channels[0].as_ref().and_then(|c| c.last.map(|r| (r, c.calibrated))) {
-                    Some((r, calibrated)) => say!(
-                        "{id}* {:>10.3}  {:<6}  (this pad){}",
-                        r.kg,
-                        yes_no(r.stable),
-                        if calibrated { "" } else { "  UNCALIBRATED: counts" }
-                    ),
-                    None => say!("{id}*  (this pad, no readings yet)"),
-                }
-                continue;
-            }
-            let Some(p) = &self.remotes[id] else { continue };
+        say!("pad      corner        kg  stable    age  received  lost %  max gap");
+        let uncal = |calibrated: bool| if calibrated { "" } else { "  UNCALIBRATED: counts" };
+        match self.own_reading() {
+            Some((r, calibrated)) => say!(
+                "{}* {:<6} {:>10.3}  {:<6}  (this pad){}",
+                self.pads.name(),
+                corner_label(self.pads.corner),
+                r.kg,
+                yes_no(r.stable),
+                uncal(calibrated)
+            ),
+            None => say!("{}* {:<6}  (this pad, no readings yet)", self.pads.name(), corner_label(self.pads.corner)),
+        }
+        for p in self.pads.remotes.iter().flatten() {
             let age = p.stats.age_ms(now).unwrap_or(0);
             say!(
-                "{id}  {:>10.3}  {:<6} {:>5.1}s  {:>8}  {:>6.2}  {:>5.2}s{}{}",
+                "{}  {:<6} {:>10.3}  {:<6} {:>5.1}s  {:>8}  {:>6.2}  {:>5.2}s{}{}",
+                p.name(),
+                corner_label(p.msg.corner),
                 p.msg.kg,
                 yes_no(p.msg.stable),
                 age as f32 / 1000.0,
                 p.stats.received,
                 p.stats.loss_pct().unwrap_or(0.0),
                 p.stats.max_gap_ms as f32 / 1000.0,
-                if age > STALE_MS { "  STALE" } else { "" },
-                if p.msg.calibrated { "" } else { "  UNCALIBRATED: counts" }
+                if p.is_fresh(now) { "" } else { "  STALE" },
+                uncal(p.msg.calibrated)
             );
         }
-        let (w, all_stable) = self.fresh_weights(now);
+        let (w, all_stable) = self.corner_weights(now);
         let settling = if all_stable { "" } else { "  (settling)" };
-        match w {
-            [Some(lf), Some(rf), Some(lr), Some(rr)] => {
+        let (present, count) = present_corners(&w);
+        match (w, count) {
+            ([Some(lf), Some(rf), Some(lr), Some(rr)], _) => {
                 if let Some(c) = scale::corners(lf, rf, lr, rr) {
                     say!(
                         "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %{settling}",
@@ -598,17 +704,45 @@ impl App {
                     );
                 }
             }
-            [Some(a), Some(b), None, None] => match scale::split(a, b) {
-                Some(pct) => say!("total {:.3} kg  pad 1 carries {:.2} %{settling}", a + b, pct),
-                None => say!("total {:.3} kg{settling}", a + b),
-            },
-            _ => say!("(totals need pads 0+1 or all four: heard, fresh and calibrated)"),
+            (_, 2) => {
+                let (a, b) = (present[0], present[1]);
+                let (ka, kb) = (w[usize::from(a.index())].unwrap_or(0.0), w[usize::from(b.index())].unwrap_or(0.0));
+                match scale::split(ka, kb) {
+                    Some(pct) => say!("total {:.3} kg  {} carries {:.2} %{settling}", ka + kb, b.name(), pct),
+                    None => say!("total {:.3} kg{settling}", ka + kb),
+                }
+            }
+            _ => say!("(totals need two or four pads with corners, heard recently and calibrated)"),
         }
     }
 
     fn selected_mut(&mut self) -> &mut Channel {
         // `selected` only ever points at an active channel.
         self.channels[self.selected].as_mut().expect("selected channel is active")
+    }
+}
+
+/// The corners that have a weight, in LF, RF, LR, RR order, and how many.
+fn present_corners(w: &[Option<f32>; 4]) -> ([Corner; 4], usize) {
+    let mut out = [Corner::LF; 4];
+    let mut n = 0;
+    for c in Corner::ALL.into_iter().filter(|c| w[usize::from(c.index())].is_some()) {
+        out[n] = c;
+        n += 1;
+    }
+    (out, n)
+}
+
+fn corner_label(c: Option<Corner>) -> &'static str {
+    c.map_or("-", Corner::name)
+}
+
+fn wheel(c: Corner) -> &'static str {
+    match c {
+        Corner::LF => "left-front",
+        Corner::RF => "right-front",
+        Corner::LR => "left-rear",
+        Corner::RR => "right-rear",
     }
 }
 

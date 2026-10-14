@@ -15,8 +15,10 @@ compile_error!("enable exactly one chip feature: `esp32s3` (default) or `esp32`"
 mod app;
 mod calib_store;
 mod console;
+mod led;
 mod link;
 mod out;
+mod pads;
 mod sampler;
 mod temperature;
 
@@ -78,6 +80,15 @@ async fn main(spawner: Spawner) {
     probe.set_input_enable(true);
     spawner.spawn(temperature::task(probe).expect("temperature task"));
 
+    #[cfg(feature = "esp32s3")]
+    spawner.spawn(led::task(p.RMT, p.GPIO48).expect("LED task"));
+    #[cfg(feature = "esp32")]
+    spawner.spawn(led::task(p.GPIO2).expect("LED task"));
+
+    // ESP-NOW frames carry the station MAC, which is the chip's base MAC.
+    let mut mac = [0u8; 6];
+    mac.copy_from_slice(esp_hal::efuse::base_mac_address().as_bytes());
+
     let wifi = esp_radio::wifi::WifiController::new(p.WIFI, Default::default()).expect("Wi-Fi init");
     let esp_now = wifi.esp_now();
     esp_now.set_channel(link::CHANNEL).expect("ESP-NOW channel");
@@ -118,5 +129,5 @@ async fn main(spawner: Spawner) {
         });
     });
 
-    app::App::new(1, store).run().await
+    app::App::new(1, store, mac).run().await
 }

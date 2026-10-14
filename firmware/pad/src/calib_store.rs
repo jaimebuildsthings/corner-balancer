@@ -3,11 +3,13 @@
 //! The partition holds two 4 KB slots in the crash-safe record format from
 //! `protocol::record`; each save goes to the slot not holding the newest record.
 //! The payload is, per channel, a length byte followed by that channel's
-//! `Calibration::encode` bytes, then an optional settings block `b'S', pad_id`.
+//! `Calibration::encode` bytes, then an optional settings block `b'S', corner`
+//! (corner 0–3 = LF, RF, LR, RR; anything else = unassigned).
 //! Records written before the settings block existed still load.
 
 use esp_bootloader_esp_idf::partitions;
 use esp_storage::FlashStorage;
+use protocol::pad::{Corner, corner_from_byte, corner_to_byte};
 use protocol::record;
 use scale::Calibration;
 use scale::calibration::ENCODED_MAX_LEN;
@@ -35,8 +37,8 @@ pub enum StoreError {
 pub struct Stored {
     /// Calibration points per channel.
     pub cals: [Calibration; MAX_CHANNELS],
-    /// This pad's ID, 0–3.
-    pub pad_id: u8,
+    /// This pad's corner, if assigned.
+    pub corner: Option<Corner>,
 }
 
 /// Calibration and settings storage.
@@ -79,8 +81,8 @@ impl CalibStore {
                 *cal = Calibration::decode(bytes).unwrap_or_default();
                 rest = &tail[usize::from(len)..];
             }
-            if let [b'S', pad_id, ..] = rest {
-                stored.pad_id = *pad_id;
+            if let [b'S', corner, ..] = rest {
+                stored.corner = corner_from_byte(*corner);
             }
         }
         self.saved = stored.clone();
@@ -89,13 +91,13 @@ impl CalibStore {
 
     /// Saves calibration points, keeping the stored settings.
     pub fn save_cals(&mut self, cals: &[Calibration; MAX_CHANNELS]) -> Result<(), StoreError> {
-        let next = Stored { cals: cals.clone(), pad_id: self.saved.pad_id };
+        let next = Stored { cals: cals.clone(), corner: self.saved.corner };
         self.save(next)
     }
 
-    /// Saves the pad ID, keeping the stored calibration.
-    pub fn save_pad_id(&mut self, pad_id: u8) -> Result<(), StoreError> {
-        let next = Stored { pad_id, ..self.saved.clone() };
+    /// Saves the corner, keeping the stored calibration.
+    pub fn save_corner(&mut self, corner: Option<Corner>) -> Result<(), StoreError> {
+        let next = Stored { corner, ..self.saved.clone() };
         self.save(next)
     }
 
@@ -109,7 +111,7 @@ impl CalibStore {
             payload[len + 1..len + 1 + n].copy_from_slice(&enc[..n]);
             len += 1 + n;
         }
-        payload[len..len + SETTINGS_LEN].copy_from_slice(&[b'S', stored.pad_id]);
+        payload[len..len + SETTINGS_LEN].copy_from_slice(&[b'S', corner_to_byte(stored.corner)]);
         len += SETTINGS_LEN;
 
         let (slot, seq) = match self.newest {
