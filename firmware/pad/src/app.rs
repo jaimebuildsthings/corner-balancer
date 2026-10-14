@@ -42,6 +42,7 @@ pub struct App {
     stream: bool,
     test: Option<Test>,
     pending_cal_kg: Option<f32>,
+    pending_tare: bool,
     /// Readings on the selected channel since the last `cal add` or `test zero`.
     fresh: u32,
     store: Option<CalibStore>,
@@ -71,6 +72,7 @@ impl App {
             stream: false,
             test: None,
             pending_cal_kg: None,
+            pending_tare: false,
             fresh: 0,
             store,
         }
@@ -125,6 +127,11 @@ impl App {
         // load placed just before typing can't be captured at its old value.
         self.fresh = self.fresh.saturating_add(1);
         let settled = r.stable && self.fresh > u32::from(self.selected_mut().scale.config().stable_samples) + 2;
+        if self.pending_tare && settled {
+            self.pending_tare = false;
+            self.selected_mut().scale.tare();
+            say!("tared at {:.0} counts", r.filtered);
+        }
         if let Some(kg) = self.pending_cal_kg
             && settled
         {
@@ -246,6 +253,7 @@ impl App {
                     self.selected = usize::from(ch);
                     self.test = None;
                     self.pending_cal_kg = None;
+                    self.pending_tare = false;
                     say!("channel {ch} selected");
                 } else {
                     say!("error: no channel {ch}");
@@ -263,11 +271,9 @@ impl App {
                 }
             }
             Command::Tare => {
-                if self.selected_mut().scale.tare() {
-                    say!("tared");
-                } else {
-                    say!("error: no reading yet");
-                }
+                self.pending_tare = true;
+                self.fresh = 0;
+                say!("tare: waiting for a stable reading...");
             }
             Command::CalAdd(kg) => {
                 self.pending_cal_kg = Some(kg);
@@ -324,6 +330,7 @@ impl App {
             Command::TestStop => {
                 self.test = None;
                 self.pending_cal_kg = None;
+                self.pending_tare = false;
                 say!("stopped");
             }
         }
