@@ -1,0 +1,20 @@
+# Hardware-independent crates, built and tested on the host with stable Rust.
+# The ESP32-S3 binary in `pad/` uses Espressif's toolchain and is built on its own.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["pad"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/jaimebuildsthings/corner-balancer"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+float_cmp = "allow"
