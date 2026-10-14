@@ -19,8 +19,8 @@ Send `json on` and the pad prints a frame 5×/s:
 
 ```json
 {"v":1,"type":"weights","t_ms":184200,"pads":[
-  {"id":0,"kg":312.400,"stable":true,"calibrated":true,"age_ms":0},
-  {"id":1,"kg":298.100,"stable":true,"calibrated":true,"age_ms":40}
+  {"name":"9a91a8","corner":"LF","kg":312.400,"stable":true,"calibrated":true,"age_ms":0},
+  {"name":"4c11e0","corner":"RF","kg":298.100,"stable":true,"calibrated":true,"age_ms":40}
 ]}
 ```
 
@@ -31,7 +31,8 @@ Send `json on` and the pad prints a frame 5×/s:
 | `v` | Protocol version (1) |
 | `type` | `"weights"` (the only type so far; ignore unknown types) |
 | `t_ms` | Milliseconds since the sending pad booted |
-| `pads[].id` | 0 = LF, 1 = RF, 2 = LR, 3 = RR |
+| `pads[].name` | The pad's name: last 6 hex digits of its MAC, printed on the pad |
+| `pads[].corner` | `"LF"`, `"RF"`, `"LR"`, `"RR"`, or `null` if not assigned |
 | `pads[].kg` | Weight after calibration and tare. **Counts, not kg, if `calibrated` is false.** `null` if invalid |
 | `pads[].stable` | The reading has settled. Wait for all four before trusting cross weight |
 | `pads[].calibrated` | The pad has a calibration |
@@ -48,10 +49,14 @@ Send console commands as text lines ending in `\n`:
 | Command | Effect |
 | --- | --- |
 | `json on` / `json off` | Start / stop frames |
-| `tare` | Zero **the connected pad** at its next settled reading |
+| `tare` / `tare all` | Zero the connected pad / every pad at its next settled reading |
+| `assign LF` | Press-to-assign: the next pad pressed (≥ 2 kg rise) becomes LF |
+| `assign LF 9a91a8` | Assign a corner directly by pad name |
+| `unassign LF` | Free a corner |
+| `blink 9a91a8` / `blink LF` | Flash a pad's LED |
 | `pads` | Human-readable table (not JSON) |
 
-Taring every pad from one connection is not supported yet.
+During press-to-assign, watch `corner` in the frames to see the result. Console replies are plain text, not JSON.
 
 ## Web Serial example
 
@@ -79,8 +84,10 @@ for await (const line of lines) {
   if (!line.startsWith("{")) continue;
   const frame = JSON.parse(line);
   if (frame.v !== 1 || frame.type !== "weights") continue;
-  const kg = Object.fromEntries(frame.pads.filter((p) => p.calibrated).map((p) => [p.id, p.kg]));
-  // kg[0..3] = LF, RF, LR, RR
+  const kg = Object.fromEntries(
+    frame.pads.filter((p) => p.calibrated && p.corner).map((p) => [p.corner, p.kg]),
+  );
+  // kg.LF, kg.RF, kg.LR, kg.RR
 }
 ```
 

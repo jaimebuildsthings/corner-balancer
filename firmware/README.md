@@ -54,15 +54,18 @@ test noise             # then: test repeat, test offcenter, test creep 600, test
 
 With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on.
 
-## Two pads over ESP-NOW
+## Pads and corners
 
-Every pad broadcasts its weight 10×/s and listens for the others. Give each pad its own ID once (saved in flash):
+Every pad broadcasts its weight 10×/s and listens for the others. Each pad has a **name** (last 6 hex digits of its MAC, e.g. `9a91a8`; put it on a sticker) and a **corner** (LF, RF, LR, RR, or none), saved on the pad.
 
 ```text
-id 0          # pad A (LF in a four-pad set)
-id 1          # pad B (RF)
-pads          # on either pad: weights, link loss, longest gap, split
-pads reset    # clear link counters before a timed run
+assign LF         # then press firmly on the pad under the left-front wheel
+assign RF 9a91a8  # or assign directly by name (or `this`)
+unassign RR       # free a corner
+blink LF          # flash a pad's LED to find it (S3: RGB LED, ESP32: GPIO2 LED)
+tare all          # zero every pad at its next settled reading
+pads              # names, corners, weights, link loss, longest gap, totals
+pads reset        # clear link counters before a timed run
 ```
 
-With two sim pads, `sim 14` on pad A and `sim 6` on pad B should show `pad 1 carries 30.00 %`.
+Assigning a corner takes it from whichever pad had it. With two sim pads: `assign LF`, then `sim 20` on the pad that should be LF (that's the "press"), `sim 0` again; repeat for RF. Then `sim 14` on LF and `sim 6` on RF: `pads` shows `RF carries 30.00 %`.

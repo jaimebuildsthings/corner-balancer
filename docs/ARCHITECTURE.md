@@ -79,7 +79,9 @@ flowchart TB
 | `console.rs` / `out.rs` | Serial input with echo / output queue |
 | `calib_store.rs` | Saves and loads calibration |
 | `temperature.rs` | Probe reading, shared as an atomic |
-| `link.rs` | ESP-NOW: broadcast this pad's readings, collect others' |
+| `link.rs` | ESP-NOW: broadcast readings and commands, collect others' |
+| `pads.rs` | Pad names, corners, remote pads by MAC, press-to-assign |
+| `led.rs` | Blink the board LED |
 
 ## Signal chain
 
@@ -108,7 +110,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | `nvs` | 20 KB | Reserved (radio) |
 | `otadata` | 8 KB | Which app slot boots |
 | `ota_0` / `ota_1` | 1.75 MB each | App slots for OTA updates |
-| `calib` | 8 KB | Two-slot record with CRC: calibration + pad ID. Never touched by app updates. |
+| `calib` | 8 KB | Two-slot record with CRC: calibration + corner. Never touched by app updates. |
 
 ## Interfaces
 
@@ -116,7 +118,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | --- | --- | --- |
 | Serial console | Text commands (`help` lists them) | `protocol::command` |
 | CSV stream | `t_ms,ch,raw,filtered,kg,stable,temp_c` | `protocol::csv` |
-| Pad ↔ pad | 19-byte `PadMsg`, ESP-NOW broadcast, channel 1 | `protocol::PadMsg` |
+| Pad ↔ pad | ESP-NOW broadcast, channel 1: 19-byte `PadMsg` readings, 13-byte `CmdMsg` commands (sent 3×) | `protocol::PadMsg`, `protocol::cmd_msg` |
 | Apps (e.g. stringline.ing) | JSON lines over USB serial (Web Serial); BLE planned | [scales-protocol.md](scales-protocol.md) |
 
 ## Status
@@ -127,5 +129,6 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | Pad firmware: sampling, console, calibration, bench tests, CSV | ✅ Builds; untested on hardware |
 | ESP-NOW between pads, `pads` view | ✅ Builds; untested on hardware |
 | Scales protocol over USB serial (`json on`) | ✅ Builds; untested on hardware |
+| Pad names, press-to-assign corners, blink, tare all | ✅ Builds; untested on hardware |
 | BLE for Web Bluetooth | ⏳ Next |
 | OTA updates | ⏳ Later (partition slots already in place) |

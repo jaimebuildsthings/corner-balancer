@@ -48,6 +48,10 @@ Ground the cable shield **at the HX711 end only**.
 
 Pins to avoid on the ESP32-S3 N16R8: GPIO 26–37 (flash/PSRAM), strapping pins 0, 3, 45, 46, and 43/44 (console UART).
 
+## Status LED
+
+`blink` flashes the onboard LED: the RGB LED on GPIO48 on ESP32-S3 DevKitC boards (some board revisions use GPIO38; check the silkscreen), or the LED on GPIO2 on original ESP32 DevKits.
+
 ## Temperature probe
 
 DS18B20 data to GPIO6 (ESP32-S3) or GPIO4 (ESP32), with a **4.7 kΩ pull-up to 3.3 V**. The firmware runs fine without it.
