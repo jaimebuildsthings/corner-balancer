@@ -20,6 +20,7 @@
   button { width: 100%; appearance: none; border: 0; border-radius: 12px; padding: 14px; font: inherit; font-weight: 650;
     background: var(--accent); color: #fff; }
   #done { display: none; }
+  .copy { margin-top: 8px; background: var(--card); color: var(--accent); border: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -33,12 +34,28 @@
     <ol>
       <li>Tap <strong>Done</strong> (top right) to keep this Wi-Fi.</li>
       <li>If your phone asks, choose to stay connected without internet.</li>
-      <li>Open your browser and go to:<span class="addr">192.168.4.1</span></li>
+      <li>Open your browser and go to:<span class="addr">192.168.4.1</span>
+        <button class="copy" id="copy">Copy address</button></li>
     </ol>
     <p>Tip: add it to your Home Screen for one-tap access next time.</p>
   </div>
 </main>
 <script>
+  // navigator.clipboard needs HTTPS; this page is plain HTTP, so use a selected text field.
+  document.getElementById("copy").onclick = () => {
+    const field = document.createElement("textarea");
+    field.value = "http://192.168.4.1/";
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (_) {}
+    field.remove();
+    document.getElementById("copy").textContent = ok ? "Copied: paste it in your browser" : "Copy failed: type 192.168.4.1";
+  };
   document.getElementById("go").onclick = async () => {
     try { await fetch("/portal/continue", { cache: "no-store" }); } catch (_) {}
     document.getElementById("start").style.display = "none";
