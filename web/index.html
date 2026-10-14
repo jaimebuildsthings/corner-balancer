@@ -245,7 +245,10 @@ $("b-tare").onclick = () => {
 };
 
 $("b-assign").onclick = () => {
-  if (!frame || !frame.pads.length) return;
+  if (!isLive() || !frame || !frame.pads.length) {
+    dialog("No live data", "Waiting for the scales. Check you're on the CornerScales Wi-Fi, then try again.", [["OK", closeDialog, true]]);
+    return;
+  }
   assign = { corners: [...CORNERS] };
   stepAssign();
 };
@@ -321,6 +324,7 @@ function send(cmd) {
 }
 
 function connect() {
+  if (document.hidden || (ws && ws.readyState <= 1)) return;
   setLink("warn", "connecting…");
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => setLink("ok", "live");
@@ -328,8 +332,23 @@ function connect() {
   ws.onclose = () => { setLink("bad", "reconnecting…"); setTimeout(connect, 1500); };
 }
 
+// The pad serves only a few connections, and a vanished one lingers for a
+// while, so let go of ours whenever the page is hidden and reconnect on return.
+document.addEventListener("visibilitychange", () => {
+  if (mock) return;
+  if (document.hidden) {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    setLink("warn", "paused");
+  } else {
+    connect();
+  }
+});
+
+const isLive = () => mock || (ws && ws.readyState === 1 && Date.now() - lastFrameAt < 2500);
+
 setInterval(() => {
   if (!mock && ws && ws.readyState === 1 && Date.now() - lastFrameAt > 2500) setLink("warn", "no data");
+  if (assign && !isLive()) $("dlg-text").textContent = "Lost the live connection to the scales; reconnecting…";
 }, 1000);
 
 // ---- mock data (file:// or ?mock) -----------------------------------------

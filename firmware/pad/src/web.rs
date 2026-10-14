@@ -72,7 +72,9 @@ fn portal_done() -> bool {
 const FRAME_MAX: usize = 1024;
 
 /// HTTP connections served at once (each is one task with its own buffers).
-const WEB_TASKS: usize = 3;
+/// A live page holds one for its WebSocket, and a vanished phone's connection
+/// lingers until TCP gives up (~45 s), so leave headroom.
+const WEB_TASKS: usize = 4;
 
 /// Sockets: one per web task, plus DHCP and captive DNS. (embassy-net would add
 /// one more for its own DNS client if its `dns` feature were on; it's kept off.)
@@ -227,7 +229,8 @@ async fn dns_task(stack: Stack<'static>) {
     }
 }
 
-static CONFIG: picoserve::Config = picoserve::Config::const_default().keep_connection_alive();
+// Plain requests close after the response, freeing the task at once.
+static CONFIG: picoserve::Config = picoserve::Config::const_default();
 
 #[embassy_executor::task(pool_size = WEB_TASKS)]
 async fn web_task(id: usize, stack: Stack<'static>, app: &'static AppRouter<WebApp>) -> ! {
