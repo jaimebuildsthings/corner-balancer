@@ -1,6 +1,12 @@
 //! The web UI on the host pad: its own Wi-Fi network, DHCP, a captive portal
-//! (every DNS name and every page lead to the UI, so phones open it on their
-//! own), and an HTTP server for `web/index.html` with a WebSocket at `/ws`.
+//! (every DNS name leads here), and an HTTP server for `web/index.html` with a
+//! WebSocket at `/ws`.
+//!
+//! The portal works like hotel Wi-Fi. Until someone taps Continue on the
+//! welcome page, phones' connectivity checks get the welcome page, so the
+//! phone pops it up. After that the checks get the answer each OS expects, so
+//! the phone keeps the network and the full UI can be used in a real browser
+//! at http://192.168.4.1/ (the pop-up sheet can't download CSV files).
 //!
 //! The WebSocket sends scales-protocol frames (as with `json on`) and accepts
 //! console commands as text messages, so the page and the serial console share
@@ -8,6 +14,7 @@
 
 use core::cell::RefCell;
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_executor::Spawner;
 use embassy_net::{Runner, Stack, StackResources, StaticConfigV4};
@@ -17,7 +24,7 @@ use embassy_time::{Duration, Timer};
 use esp_radio::wifi::{Interface, WifiController};
 use picoserve::futures::Either;
 use picoserve::response::ws;
-use picoserve::response::{File, ResponseWriter};
+use picoserve::response::{File, NoContent, ResponseWriter, StatusCode};
 use picoserve::routing::{PathRouterService, RequestHandlerService, get};
 use picoserve::{AppBuilder, AppRouter, ResponseSent};
 use static_cell::StaticCell;
@@ -27,8 +34,39 @@ use crate::out::say;
 /// The host pad's address on its own network.
 pub const ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 168, 4, 1);
 
-/// The page, embedded at build time.
-const PAGE: File = File::html(include_str!("../../../web/index.html"));
+/// The UI page, embedded at build time.
+const PAGE: Html = Html(include_str!("../../../web/index.html"));
+
+/// Shown by phones' captive-portal pop-up until someone continues.
+const WELCOME: Html = Html(include_str!("../../../web/welcome.html"));
+
+/// Apple's expected answer to its connectivity check.
+const APPLE_SUCCESS: Html = Html("<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+
+/// An HTML body that handlers can pick at runtime.
+#[derive(Clone, Copy)]
+struct Html(&'static str);
+
+impl picoserve::response::Content for Html {
+    fn content_type(&self) -> &'static str {
+        "text/html; charset=utf-8"
+    }
+
+    fn content_length(&self) -> usize {
+        self.0.len()
+    }
+
+    async fn write_content<W: picoserve::io::Write>(self, writer: W) -> Result<(), W::Error> {
+        self.0.write_content(writer).await
+    }
+}
+
+/// Someone tapped Continue on the welcome page since the pad started.
+static PORTAL_DONE: AtomicBool = AtomicBool::new(false);
+
+fn portal_done() -> bool {
+    PORTAL_DONE.load(Ordering::Relaxed)
+}
 
 /// Longest frame passed to WebSocket clients.
 const FRAME_MAX: usize = 1024;
@@ -208,13 +246,33 @@ impl AppBuilder for WebApp {
     type PathRouter = impl picoserve::routing::PathRouter;
 
     fn build_app(self) -> picoserve::Router<Self::PathRouter> {
+        // Connectivity checks: the welcome page until continued, then what each OS expects.
+        let apple = || async { if portal_done() { Ok(APPLE_SUCCESS) } else { Err(WELCOME) } };
+        let android = || async { if portal_done() { Ok((StatusCode::NO_CONTENT, NoContent)) } else { Err(WELCOME) } };
         picoserve::Router::from_service(AnyPath)
+            .route("/", get(async || PAGE))
             .route("/ws", get(async |upgrade: ws::WebSocketUpgrade| upgrade.on_upgrade(Live)))
+            .route(
+                "/portal/continue",
+                get(async || {
+                    PORTAL_DONE.store(true, Ordering::Relaxed);
+                    "ok"
+                }),
+            )
+            .route("/hotspot-detect.html", get(apple))
+            .route("/library/test/success.html", get(apple))
+            .route("/generate_204", get(android))
+            .route("/gen_204", get(android))
+            .route(
+                "/connecttest.txt",
+                get(async || if portal_done() { Ok("Microsoft Connect Test") } else { Err(WELCOME) }),
+            )
+            .route("/ncsi.txt", get(async || if portal_done() { Ok("Microsoft NCSI") } else { Err(WELCOME) }))
     }
 }
 
-/// Serves the page for every path, so phones' captive-portal checks
-/// (e.g. `/hotspot-detect.html`, `/generate_204`) land on it.
+/// Every other path (other OS checks, stray requests): the welcome page until
+/// continued, then the UI.
 struct AnyPath;
 
 impl PathRouterService for AnyPath {
@@ -226,7 +284,8 @@ impl PathRouterService for AnyPath {
         request: picoserve::request::Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        PAGE.call_request_handler_service(state, current_path_parameters, request, response_writer).await
+        let page = if portal_done() { PAGE } else { WELCOME };
+        File::html(page.0).call_request_handler_service(state, current_path_parameters, request, response_writer).await
     }
 }
 

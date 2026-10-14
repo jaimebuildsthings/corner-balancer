@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Corner Scales</title>
+<style>
+  :root { --bg: #f6f5f1; --card: #fff; --fg: #1f1f1c; --muted: #6a6962; --line: #dedcd4; --accent: #2f6fd6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --card: #222227; --fg: #ecebe6; --muted: #a3a29b; --line: #34343b; --accent: #6fa0f0; }
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 420px; margin: 0 auto; padding: 28px 20px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { color: var(--muted); margin: 0 0 18px; }
+  ol { padding-left: 22px; margin: 0 0 22px; } li { margin-bottom: 10px; }
+  .addr { display: block; font-size: 26px; font-weight: 700; letter-spacing: .01em; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; margin: 6px 0 0; user-select: all; }
+  button { width: 100%; appearance: none; border: 0; border-radius: 12px; padding: 14px; font: inherit; font-weight: 650;
+    background: var(--accent); color: #fff; }
+  #done { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Corner Scales</h1>
+  <p>You're connected to the scales' own Wi-Fi. It has no internet; that's expected.</p>
+  <div id="start">
+    <button id="go">Continue</button>
+  </div>
+  <div id="done">
+    <ol>
+      <li>Tap <strong>Done</strong> (top right) to keep this Wi-Fi.</li>
+      <li>If your phone asks, choose to stay connected without internet.</li>
+      <li>Open your browser and go to:<span class="addr">192.168.4.1</span></li>
+    </ol>
+    <p>Tip: add it to your Home Screen for one-tap access next time.</p>
+  </div>
+</main>
+<script>
+  document.getElementById("go").onclick = async () => {
+    try { await fetch("/portal/continue", { cache: "no-store" }); } catch (_) {}
+    document.getElementById("start").style.display = "none";
+    document.getElementById("done").style.display = "block";
+  };
+</script>
+</body>
+</html>

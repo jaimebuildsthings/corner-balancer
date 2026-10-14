@@ -11,6 +11,8 @@
 #![no_main]
 // picoserve's app builder names its router type with `impl Trait`.
 #![feature(impl_trait_in_assoc_type)]
+// picoserve's router type nests one level per route; the web UI has about a dozen.
+#![recursion_limit = "256"]
 
 #[cfg(all(feature = "esp32s3", feature = "esp32"))]
 compile_error!("enable exactly one chip feature: `esp32s3` (default) or `esp32`");
