@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 564" width="760" height="564" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" role="img" aria-label="Full-size pad side view">
+<rect width="760" height="564" fill="#ffffff"/>
+<text x="24" y="34" font-size="15" font-weight="600" fill="#1f1f1c">Only the tire's weight reaches the cells; the ramp never touches the pad</text>
+<text x="24" y="54" font-size="11.5" fill="#5f5e57">Full-size pad side view, 2 of 4 cells shown, not to scale</text>
+<line x1="24" x2="736" y1="330" y2="330" stroke="#d8d6cf" stroke-width="1.25"/>
+<circle cx="424" cy="172" r="64" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<circle cx="424" cy="172" r="36" fill="none" stroke="#d8d6cf" stroke-width="1.25"/>
+<text x="424" y="176" font-size="11.5" fill="#5f5e57" text-anchor="middle">tire</text>
+<polygon points="40,330 236,330 236,236" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<rect x="256" y="236" width="336" height="6" rx="0" fill="none" stroke="#9b998f" stroke-width="1"/>
+<rect x="256" y="242" width="336" height="6" rx="0" fill="none" stroke="#9b998f" stroke-width="1"/>
+<rect x="248" y="248" width="352" height="12" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<rect x="280" y="280" width="24" height="10" rx="0" fill="#e9e8e3" stroke="#9b998f" stroke-width="1"/>
+<rect x="280" y="266" width="80" height="14" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<circle cx="348" cy="263" r="3" fill="#2f6fd6"/>
+<rect x="488" y="280" width="24" height="10" rx="0" fill="#e9e8e3" stroke="#9b998f" stroke-width="1"/>
+<rect x="488" y="266" width="80" height="14" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<circle cx="556" cy="263" r="3" fill="#2f6fd6"/>
+<rect x="418" y="264" width="12" height="26" rx="0" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<rect x="248" y="290" width="352" height="24" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<rect x="269" y="314" width="6" height="10" rx="0" fill="none" stroke="#9b998f" stroke-width="1"/>
+<rect x="260" y="324" width="24" height="6" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<rect x="573" y="314" width="6" height="10" rx="0" fill="none" stroke="#9b998f" stroke-width="1"/>
+<rect x="564" y="324" width="24" height="6" rx="2" fill="none" stroke="#9b998f" stroke-width="1.25"/>
+<path d="M615 242H592" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M616 264L600 256" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M376 277H360" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M446 277H430" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M615 302H600" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M293 345L284 330" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M128 255L150 277" fill="none" stroke="#9b998f" stroke-width="1"/>
+<path d="M242 209V236" fill="none" stroke="#9b998f" stroke-width="1"/>
+<circle cx="624" cy="242" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="624" y="246" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">1</text>
+<circle cx="624" cy="268" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="624" y="272" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">2</text>
+<circle cx="385" cy="277" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="385" y="281" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">3</text>
+<circle cx="455" cy="277" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="455" y="281" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">4</text>
+<circle cx="624" cy="302" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="624" y="306" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">5</text>
+<circle cx="300" cy="352" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="300" y="356" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">6</text>
+<circle cx="120" cy="250" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="120" y="254" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">7</text>
+<circle cx="242" cy="200" r="9" fill="#ffffff" stroke="#9b998f" stroke-width="1.25"/><text x="242" y="204" font-size="11.5" font-weight="600" fill="#1f1f1c" text-anchor="middle">8</text>
+<text x="24" y="392" font-size="13" font-weight="600" fill="#1f1f1c">1  Slip plate</text>
+<text x="24" y="408" font-size="11.5" fill="#5f5e57">two greased sheets; tire can shift as it settles</text>
+<text x="24" y="436" font-size="13" font-weight="600" fill="#1f1f1c">2  Top plate</text>
+<text x="24" y="452" font-size="11.5" fill="#5f5e57">10 mm aluminum or ribbed steel; must not flex</text>
+<text x="24" y="480" font-size="13" font-weight="600" fill="#1f1f1c">3  Load cell, ~500 kg</text>
+<text x="24" y="496" font-size="11.5" fill="#5f5e57">shear beam bolted at one end, ball at the free end</text>
+<text x="24" y="524" font-size="13" font-weight="600" fill="#1f1f1c">4  Overload stop</text>
+<text x="24" y="540" font-size="11.5" fill="#5f5e57">a few mm below the plate; catches a hard drop</text>
+<text x="392" y="392" font-size="13" font-weight="600" fill="#1f1f1c">5  Base frame</text>
+<text x="392" y="408" font-size="11.5" fill="#5f5e57">steel; carries the cells and electronics box</text>
+<text x="392" y="436" font-size="13" font-weight="600" fill="#1f1f1c">6  Leveling foot</text>
+<text x="392" y="452" font-size="11.5" fill="#5f5e57">threaded with lock nut; level all four pads</text>
+<text x="392" y="480" font-size="13" font-weight="600" fill="#1f1f1c">7  Ramp</text>
+<text x="392" y="496" font-size="11.5" fill="#5f5e57">same height as the slip plate, separate part</text>
+<text x="392" y="524" font-size="13" font-weight="600" fill="#1f1f1c">8  Gap</text>
+<text x="392" y="540" font-size="11.5" fill="#5f5e57">a few mm, so roll-on impact never loads the cells</text>
+</svg>
