@@ -42,6 +42,8 @@ pub struct App {
     stream: bool,
     test: Option<Test>,
     pending_cal_kg: Option<f32>,
+    /// Readings on the selected channel since the last `cal add` or `test zero`.
+    fresh: u32,
     store: Option<CalibStore>,
 }
 
@@ -69,6 +71,7 @@ impl App {
             stream: false,
             test: None,
             pending_cal_kg: None,
+            fresh: 0,
             store,
         }
     }
@@ -117,8 +120,13 @@ impl App {
     }
 
     async fn on_selected_reading(&mut self, t_ms: u64, r: Reading) {
+        // A reading only counts as settled once its whole stability window
+        // (plus the median's two-sample delay) came after the command, so a
+        // load placed just before typing can't be captured at its old value.
+        self.fresh = self.fresh.saturating_add(1);
+        let settled = r.stable && self.fresh > u32::from(self.selected_mut().scale.config().stable_samples) + 2;
         if let Some(kg) = self.pending_cal_kg
-            && r.stable
+            && settled
         {
             self.pending_cal_kg = None;
             let counts = round(r.filtered);
@@ -204,7 +212,7 @@ impl App {
                 }
             }
             Test::Zero => {
-                if r.stable {
+                if settled {
                     self.test = None;
                     say!(
                         "zero: {:.1} g (target within {:.1} g): {}",
@@ -263,6 +271,7 @@ impl App {
             }
             Command::CalAdd(kg) => {
                 self.pending_cal_kg = Some(kg);
+                self.fresh = 0;
                 say!("cal: waiting for a stable reading with {kg} kg on the pad...");
             }
             Command::CalUndo => match self.selected_mut().cal.remove_last() {
@@ -299,7 +308,10 @@ impl App {
                 let test = Test::Creep(CreepTest::new(u64::from(secs) * 1000));
                 self.start(test, "creep: tare the empty pad first, then place a heavy load").await
             }
-            Command::TestZero => self.start(Test::Zero, "zero: waiting for a stable reading").await,
+            Command::TestZero => {
+                self.fresh = 0;
+                self.start(Test::Zero, "zero: waiting for a stable reading").await
+            }
             Command::Sim(kg) => {
                 #[cfg(feature = "sim")]
                 {
