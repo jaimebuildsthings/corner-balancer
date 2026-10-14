@@ -117,6 +117,9 @@ async fn main(spawner: Spawner) {
     });
     #[cfg(feature = "sim")]
     let _unused_hx711_pins = (hx_dout, hx_sck);
+    // BOOT (GPIO0 on both chips) is a plain input once the chip is running.
+    #[cfg(feature = "sim")]
+    let boot_button = esp_hal::gpio::Input::new(p.GPIO0, esp_hal::gpio::InputConfig::default().with_pull(Pull::Up));
 
     static CORE1_STACK: StaticCell<Stack<8192>> = StaticCell::new();
     esp_rtos::start_second_core(p.CPU_CTRL, p.FROM_CPU_INTR1, CORE1_STACK.init(Stack::new()), move || {
@@ -125,7 +128,7 @@ async fn main(spawner: Spawner) {
             #[cfg(not(feature = "sim"))]
             spawner.spawn(sampler::hx711_task(0, amp).expect("hx711 task"));
             #[cfg(feature = "sim")]
-            spawner.spawn(sampler::sim_task(0).expect("sim task"));
+            spawner.spawn(sampler::sim_task(0, boot_button).expect("sim task"));
         });
     });
 

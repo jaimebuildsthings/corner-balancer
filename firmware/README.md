@@ -52,7 +52,7 @@ cal save
 test noise             # then: test repeat, test offcenter, test creep 600, test zero
 ```
 
-With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on.
+With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on. Holding the board's **BOOT** button adds 20 kg while held, like pressing on a pad.
 
 ## Pads and corners
 
@@ -68,4 +68,4 @@ pads              # names, corners, weights, link loss, longest gap, totals
 pads reset        # clear link counters before a timed run
 ```
 
-Assigning a corner takes it from whichever pad had it. With two sim pads: `assign LF`, then `sim 20` on the pad that should be LF (that's the "press"), `sim 0` again; repeat for RF. Then `sim 14` on LF and `sim 6` on RF: `pads` shows `RF carries 30.00 %`.
+Assigning a corner takes it from whichever pad had it. With sim pads: `assign LF`, then hold **BOOT** on the board that should be LF; repeat for RF. Then `sim 14` on LF and `sim 6` on RF: `pads` shows `RF carries 30.00 %`.
