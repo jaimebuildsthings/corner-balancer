@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pad log plots</title>
+<link rel="stylesheet" href="vendor/uplot/uPlot.min.css">
+<style>
+  :root { --bg: #fff; --fg: #1f1f1c; --muted: #5f5e57; --line: #d8d6cf; --accent: #2f6fd6; --panel: #f6f5f1; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161614; --fg: #ecebe6; --muted: #a3a29b; --line: #3a3934; --accent: #6fa0f0; --panel: #1f1f1c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  p.hint { color: var(--muted); margin: 0 0 16px; }
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 20px; text-align: center; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--fg); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  .panel { background: var(--panel); border-radius: 8px; padding: 12px; overflow-x: auto; }
+  .chart { width: 100%; }
+  .u-legend, .u-title { color: var(--fg); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pad log plots</h1>
+  <p class="hint">Capture a run with <code>stream on</code> (e.g. <code>espflash monitor | tee run.log</code>), then drop the file here. Nothing is uploaded. Drag across a chart to zoom; the stats follow the zoomed range.</p>
+
+  <label id="drop">Drop a log or CSV here, or <input type="file" id="file" accept=".csv,.log,.txt"></label>
+
+  <section id="out" hidden>
+    <h2>Stats for the visible range</h2>
+    <div class="panel"><table id="stats"></table></div>
+
+    <h2>Weight</h2>
+    <div class="panel"><div id="kg" class="chart"></div></div>
+
+    <section id="temp-section" hidden>
+      <h2>Temperature</h2>
+      <div class="panel"><div id="temp" class="chart"></div></div>
+    </section>
+
+    <section id="cal-section" hidden>
+      <h2>Calibration residuals (last <code>cal fit</code> in the log)</h2>
+      <div class="panel"><div id="cal" class="chart"></div></div>
+    </section>
+  </section>
+</main>
+
+<script src="vendor/uplot/uPlot.iife.min.js"></script>
+<script>
+"use strict";
+
+const COLORS = ["#2f6fd6", "#d6602f", "#2f9d5c", "#9b4fd6"];
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let charts = [];
+
+// Rows start with a digit; everything else in a monitor capture is console text.
+function parseLog(text) {
+  const rows = [];
+  const cal = [];
+  for (const line of text.split(/\r?\n/)) {
+    const c = line.split(",");
+    if (/^\d/.test(line) && c.length >= 6) {
+      const temp = c[6] === undefined || c[6] === "" ? NaN : Number(c[6]);
+      rows.push({ t: Number(c[0]) / 1000, ch: Number(c[1]), raw: Number(c[2]), kg: Number(c[4]), stable: c[5] === "1", temp });
+      continue;
+    }
+    // "      -120004 counts      0.000 kg  residual     +0.0 g" from `cal fit`
+    const m = line.match(/^\s+(-?\d+) counts\s+(-?[\d.]+) kg\s+residual\s+([+-]?[\d.]+) g/);
+    if (m) {
+      if (cal.length && cal.at(-1).done) cal.length = 0;
+      cal.push({ kg: Number(m[2]), res: Number(m[3]) });
+    } else if (cal.length && /^linearity:/.test(line)) {
+      cal.at(-1).done = true;
+    }
+  }
+  return { rows, cal };
+}
+
+function stats(values) {
+  const v = values.filter(Number.isFinite);
+  if (!v.length) return null;
+  const mean = v.reduce((a, b) => a + b, 0) / v.length;
+  const sd = v.length > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / (v.length - 1)) : 0;
+  return { n: v.length, mean, sd, min: Math.min(...v), max: Math.max(...v), first: v[0], last: v.at(-1) };
+}
+
+function renderStats(byCh, lo, hi) {
+  const head = "<tr><th>Channel</th><th>Readings</th><th>Seconds</th><th>Mean kg</th><th>Std dev g</th><th>Spread g</th><th>Drift g</th><th>Temp °C</th></tr>";
+  const body = [...byCh.entries()].map(([ch, rows]) => {
+    const r = rows.filter((x) => x.t >= lo && x.t <= hi);
+    const s = stats(r.map((x) => x.kg));
+    if (!s) return `<tr><td>ch${ch}</td><td colspan="7">no readings in range</td></tr>`;
+    const t = stats(r.map((x) => x.temp));
+    const temp = t ? `${t.min.toFixed(2)}–${t.max.toFixed(2)}` : "—";
+    const secs = (r.at(-1).t - r[0].t).toFixed(1);
+    return `<tr><td>ch${ch}</td><td>${s.n}</td><td>${secs}</td><td>${s.mean.toFixed(4)}</td>` +
+      `<td>${(s.sd * 1000).toFixed(1)}</td><td>${((s.max - s.min) * 1000).toFixed(1)}</td>` +
+      `<td>${((s.last - s.first) * 1000).toFixed(1)}</td><td>${temp}</td></tr>`;
+  }).join("");
+  document.getElementById("stats").innerHTML = head + body;
+}
+
+function chartOpts(el, title, series, extra = {}) {
+  const axis = { stroke: css("--muted"), grid: { stroke: css("--line"), width: 1 }, ticks: { stroke: css("--line") } };
+  return {
+    title, width: el.clientWidth, height: 300,
+    scales: { x: { time: false } },
+    axes: [{ ...axis, label: "seconds since boot" }, { ...axis, label: extra.yLabel ?? "" }],
+    series: [{ label: "t (s)" }, ...series],
+    cursor: { sync: { key: "pad" } },
+    ...extra.opts,
+  };
+}
+
+function render({ rows, cal }) {
+  charts.forEach((c) => c.destroy());
+  charts = [];
+  if (!rows.length) { alert("No CSV rows found. Was `stream on` running?"); return; }
+  document.getElementById("out").hidden = false;
+
+  const byCh = new Map();
+  for (const r of rows) (byCh.get(r.ch) ?? byCh.set(r.ch, []).get(r.ch)).push(r);
+  const chs = [...byCh.keys()].sort();
+
+  // One shared time axis; channels without a reading at a time get null.
+  const times = [...new Set(rows.map((r) => r.t))].sort((a, b) => a - b);
+  const index = new Map(times.map((t, i) => [t, i]));
+  const column = (ch, key) => {
+    const col = new Array(times.length).fill(null);
+    for (const r of byCh.get(ch)) col[index.get(r.t)] = Number.isFinite(r[key]) ? r[key] : null;
+    return col;
+  };
+
+  const kgEl = document.getElementById("kg");
+  const kgSeries = chs.map((ch, i) => ({ label: `ch${ch} kg`, stroke: COLORS[i % 4], width: 1.5, spanGaps: true }));
+  const kgChart = new uPlot(
+    chartOpts(kgEl, "", kgSeries, {
+      yLabel: "kg",
+      opts: { hooks: { setScale: [(u, key) => { if (key === "x") renderStats(byCh, u.scales.x.min, u.scales.x.max); }] } },
+    }),
+    [times, ...chs.map((ch) => column(ch, "kg"))],
+    kgEl,
+  );
+  charts.push(kgChart);
+  renderStats(byCh, times[0], times.at(-1));
+
+  const hasTemp = rows.some((r) => Number.isFinite(r.temp));
+  document.getElementById("temp-section").hidden = !hasTemp;
+  if (hasTemp) {
+    const el = document.getElementById("temp");
+    const series = chs.map((ch, i) => ({ label: `ch${ch} °C`, stroke: COLORS[i % 4], width: 1.5, spanGaps: true }));
+    charts.push(new uPlot(chartOpts(el, "", series, { yLabel: "°C" }), [times, ...chs.map((ch) => column(ch, "temp"))], el));
+  }
+
+  document.getElementById("cal-section").hidden = cal.length === 0;
+  if (cal.length) {
+    const el = document.getElementById("cal");
+    const pts = [...cal].sort((a, b) => a.kg - b.kg);
+    const axis = { stroke: css("--muted"), grid: { stroke: css("--line"), width: 1 }, ticks: { stroke: css("--line") } };
+    charts.push(new uPlot({
+      width: el.clientWidth, height: 260,
+      scales: { x: { time: false } },
+      axes: [{ ...axis, label: "known weight, kg" }, { ...axis, label: "residual, g" }],
+      series: [{ label: "kg" }, { label: "residual g", stroke: COLORS[1], width: 1.5, points: { show: true, size: 8 } }],
+    }, [pts.map((p) => p.kg), pts.map((p) => p.res)], el));
+  }
+}
+
+function load(file) {
+  file.text().then((text) => render(parseLog(text)));
+}
+
+const drop = document.getElementById("drop");
+document.getElementById("file").addEventListener("change", (e) => e.target.files[0] && load(e.target.files[0]));
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]);
+});
+window.addEventListener("resize", () => charts.forEach((c) => c.setSize({ width: c.root.parentElement.clientWidth - 0, height: c.height })));
+</script>
+</body>
+</html>
