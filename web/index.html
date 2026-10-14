@@ -111,6 +111,7 @@ let lastFrameAt = 0;
 let log = null;            // rows while logging CSV
 let assign = null;         // assign walk-through: { corners, baselines }
 const PRESS_KG = 2;        // rise that counts as pressing a pad
+const MIN_TOTAL_KG = 1;    // below this, percentages are just noise
 
 // ---- corner cards ----------------------------------------------------------
 const cards = {};
@@ -138,14 +139,14 @@ function analyse(f) {
   const present = Object.keys(kg);
   const total = present.reduce((a, c) => a + kg[c], 0);
   const settled = present.every((c) => byCorner[c].stable);
-  const pct = (...cs) => (total > 0 ? (cs.reduce((a, c) => a + kg[c], 0) / total) * 100 : null);
+  const pct = (...cs) => (total >= MIN_TOTAL_KG ? (cs.reduce((a, c) => a + kg[c], 0) / total) * 100 : null);
   const all4 = present.length === 4;
   return {
     byCorner, claims, spares, kg, total, settled, present,
     front: all4 ? pct("LF", "RF") : null,
     left: all4 ? pct("LF", "LR") : null,
     cross: all4 ? pct("LF", "RR") : null,
-    split: present.length === 2 ? { a: present[0], b: present[1], pctB: pct(present[1]) } : null,
+    split: present.length === 2 && total >= MIN_TOTAL_KG ? { a: present[0], b: present[1], pctB: pct(present[1]) } : null,
   };
 }
 
@@ -177,7 +178,7 @@ function render() {
     } else {
       dot.classList.add(p.stable ? "ok" : "warn");
       kgEl.innerHTML = `${fmt(p.kg)} <small>kg</small>`;
-      const share = a.total > 0 && a.present.length > 1 ? ` · ${fmt((p.kg / a.total) * 100)} %` : "";
+      const share = a.total >= MIN_TOTAL_KG && a.present.length > 1 ? ` · ${fmt((p.kg / a.total) * 100)} %` : "";
       sub.textContent = `pad ${p.name}${share}`;
     }
   }

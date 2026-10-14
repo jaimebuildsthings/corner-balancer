@@ -25,6 +25,9 @@ use crate::{MAX_CHANNELS, temperature};
 /// Default full-scale rating for pass targets: the phase 1 bench pad.
 const DEFAULT_FULL_SCALE_KG: f32 = 200.0;
 
+/// Below this total, percentages are just noise and aren't shown.
+const MIN_TOTAL_KG: f32 = 1.0;
+
 /// Interval between scales-protocol frames.
 const JSON_INTERVAL_MS: u64 = 200;
 
@@ -765,7 +768,7 @@ impl App {
         let settling = if all_stable { "" } else { "  (settling)" };
         let (present, count) = present_corners(&w);
         match (w, count) {
-            ([Some(lf), Some(rf), Some(lr), Some(rr)], _) => {
+            ([Some(lf), Some(rf), Some(lr), Some(rr)], _) if lf + rf + lr + rr >= MIN_TOTAL_KG => {
                 if let Some(c) = scale::corners(lf, rf, lr, rr) {
                     say!(
                         "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %{settling}",
@@ -775,6 +778,10 @@ impl App {
                         c.cross_pct
                     );
                 }
+            }
+            (_, 2 | 4) if w.iter().flatten().sum::<f32>() < MIN_TOTAL_KG => {
+                let total: f32 = w.iter().flatten().sum();
+                say!("total {total:.3} kg (percentages from {MIN_TOTAL_KG} kg){settling}");
             }
             (_, 2) => {
                 let (a, b) = (present[0], present[1]);
