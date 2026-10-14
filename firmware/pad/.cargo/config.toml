@@ -3,10 +3,10 @@ target = "xtensa-esp32s3-none-elf"
 rustflags = ["-C", "link-arg=-nostartfiles", "-C", "link-arg=-Wl,--no-warn-rwx-segments"]
 
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor --chip esp32s3 --partition-table partitions.csv"
+runner = "espflash flash --monitor --chip esp32s3 --partition-table partitions.csv --baud 921600 --monitor-baud 115200"
 
 [target.xtensa-esp32-none-elf]
-runner = "espflash flash --monitor --chip esp32 --partition-table partitions.csv"
+runner = "espflash flash --monitor --chip esp32 --partition-table partitions.csv --baud 921600 --monitor-baud 115200"
 
 [alias]
 # Original ESP32 boards. Append `--features sim` for a board without load cells.
