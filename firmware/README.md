@@ -53,3 +53,16 @@ test noise             # then: test repeat, test offcenter, test creep 600, test
 ```
 
 With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on.
+
+## Two pads over ESP-NOW
+
+Every pad broadcasts its weight 10×/s and listens for the others. Give each pad its own ID once (saved in flash):
+
+```text
+id 0          # pad A (LF in a four-pad set)
+id 1          # pad B (RF)
+pads          # on either pad: weights, link loss, longest gap, split
+pads reset    # clear link counters before a timed run
+```
+
+With two sim pads, `sim 14` on pad A and `sim 6` on pad B should show `pad 1 carries 30.00 %`.

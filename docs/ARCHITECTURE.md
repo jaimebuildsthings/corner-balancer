@@ -16,10 +16,10 @@ flowchart TB
     B["Pads B…D"]
     phone -. "Wi-Fi AP + WebSocket (1b)" .-> A
     laptop -- "USB serial: console + CSV<br/>(any pad, 1a)" --> A
-    B -. "ESP-NOW readings (1b)" .-> A
+    B -- "ESP-NOW broadcast (1b)" --> A
 ```
 
-Solid = built. Dashed = planned (phase 1b).
+Solid = built. Dashed = planned.
 
 ## Repo map
 
@@ -60,6 +60,7 @@ flowchart TB
         con["console task<br/>(UART0 RX)"]
         temp["temperature task<br/>(DS18B20, every ~5 s)"]
         out["output task<br/>(UART0 TX)"]
+        radio["ESP-NOW tasks<br/>(send · receive)"]
         flash[("calib partition")]
     end
     hx --> q --> app
@@ -67,6 +68,7 @@ flowchart TB
     temp -- "latest °C" --> app
     app -- "text, CSV" --> out
     app <--> flash
+    app <-- "PadMsg" --> radio
 ```
 
 | File | Role |
@@ -77,6 +79,7 @@ flowchart TB
 | `console.rs` / `out.rs` | Serial input with echo / output queue |
 | `calib_store.rs` | Saves and loads calibration |
 | `temperature.rs` | Probe reading, shared as an atomic |
+| `link.rs` | ESP-NOW: broadcast this pad's readings, collect others' |
 
 ## Signal chain
 
@@ -105,7 +108,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | `nvs` | 20 KB | Reserved (radio) |
 | `otadata` | 8 KB | Which app slot boots |
 | `ota_0` / `ota_1` | 1.75 MB each | App slots for OTA updates |
-| `calib` | 8 KB | Two-slot calibration record with CRC. Never touched by app updates. |
+| `calib` | 8 KB | Two-slot record with CRC: calibration + pad ID. Never touched by app updates. |
 
 ## Interfaces
 
@@ -113,7 +116,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | --- | --- | --- |
 | Serial console | Text commands (`help` lists them) | `protocol::command` |
 | CSV stream | `t_ms,ch,raw,filtered,kg,stable,temp_c` | `protocol::csv` |
-| Pad → UI pad | 19-byte `PadMsg` over ESP-NOW | `protocol::PadMsg` |
+| Pad ↔ pad | 19-byte `PadMsg`, ESP-NOW broadcast, channel 1 | `protocol::PadMsg` |
 | Phone UI | WebSocket JSON | *planned (1b)* |
 
 ## Status
@@ -122,5 +125,6 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | --- | --- |
 | Host crates + tests | ✅ Built |
 | Pad firmware: sampling, console, calibration, bench tests, CSV | ✅ Builds; untested on hardware |
-| ESP-NOW link, Wi-Fi AP, phone UI | ⏳ Phase 1b |
+| ESP-NOW between pads, `pads` view | ✅ Builds; untested on hardware |
+| Wi-Fi AP, phone UI | ⏳ Phase 1b |
 | OTA updates | ⏳ Later (partition slots already in place) |
