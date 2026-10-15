@@ -132,7 +132,7 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | ESP-NOW between pads, `pads` view | ✅ Builds; untested on hardware |
 | Scales protocol over USB serial (`json on`) | ✅ Builds; untested on hardware |
 | Pad names, press-to-assign corners, blink, tare all | ✅ Tested on 2 ESP32s (sim) |
-| Web UI on the host pad's Wi-Fi (`web/`) | ✅ Builds; page tested with mock data; untested on hardware |
+| Web UI on the host pad's Wi-Fi (`web/`) | ✅ Tested: 2 ESP32s (sim) + iPhone (captive portal, Safari, assign walk-through) |
 | Garage Wi-Fi (join an existing network) | ⏳ Later |
 | BLE for Web Bluetooth | ⏳ Maybe |
 | OTA updates | ⏳ Later (partition slots already in place) |
