@@ -43,6 +43,10 @@ const WELCOME: Html = Html(include_str!("../../../web/welcome.html"));
 /// Apple's expected answer to its connectivity check.
 const APPLE_SUCCESS: Html = Html("<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
 
+/// Browsers must never reuse an old copy: after a reflash the page changes,
+/// and Safari otherwise kept running the previous version.
+const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
+
 /// An HTML body that handlers can pick at runtime.
 #[derive(Clone, Copy)]
 struct Html(&'static str);
@@ -250,10 +254,12 @@ impl AppBuilder for WebApp {
 
     fn build_app(self) -> picoserve::Router<Self::PathRouter> {
         // Connectivity checks: the welcome page until continued, then what each OS expects.
-        let apple = || async { if portal_done() { Ok(APPLE_SUCCESS) } else { Err(WELCOME) } };
-        let android = || async { if portal_done() { Ok((StatusCode::NO_CONTENT, NoContent)) } else { Err(WELCOME) } };
+        let apple = || async { if portal_done() { Ok((NO_STORE, APPLE_SUCCESS)) } else { Err((NO_STORE, WELCOME)) } };
+        let android = || async {
+            if portal_done() { Ok((StatusCode::NO_CONTENT, NO_STORE, NoContent)) } else { Err((NO_STORE, WELCOME)) }
+        };
         picoserve::Router::from_service(AnyPath)
-            .route("/", get(async || PAGE))
+            .route("/", get(async || (NO_STORE, PAGE)))
             .route("/ws", get(async |upgrade: ws::WebSocketUpgrade| upgrade.on_upgrade(Live)))
             .route(
                 "/portal/continue",
@@ -268,9 +274,12 @@ impl AppBuilder for WebApp {
             .route("/gen_204", get(android))
             .route(
                 "/connecttest.txt",
-                get(async || if portal_done() { Ok("Microsoft Connect Test") } else { Err(WELCOME) }),
+                get(async || if portal_done() { Ok("Microsoft Connect Test") } else { Err((NO_STORE, WELCOME)) }),
             )
-            .route("/ncsi.txt", get(async || if portal_done() { Ok("Microsoft NCSI") } else { Err(WELCOME) }))
+            .route(
+                "/ncsi.txt",
+                get(async || if portal_done() { Ok("Microsoft NCSI") } else { Err((NO_STORE, WELCOME)) }),
+            )
     }
 }
 
@@ -288,7 +297,9 @@ impl PathRouterService for AnyPath {
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         let page = if portal_done() { PAGE } else { WELCOME };
-        File::html(page.0).call_request_handler_service(state, current_path_parameters, request, response_writer).await
+        File::with_content_type_and_headers(File::MIME_HTML, page.0.as_bytes(), &[NO_STORE])
+            .call_request_handler_service(state, current_path_parameters, request, response_writer)
+            .await
     }
 }
 
