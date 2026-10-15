@@ -249,13 +249,16 @@ $("b-assign").onclick = () => {
     dialog("No live data", "Waiting for the scales. Check you're on the CornerScales Wi-Fi, then try again.", [["OK", closeDialog, true]]);
     return;
   }
-  assign = { corners: [...CORNERS] };
+  assign = { corners: [...CORNERS], used: new Set(), release: null, last: null };
   stepAssign();
 };
 
 // The page finds the pressed pad itself (every pad's weight is in each frame)
 // and sends an explicit `assign CORNER NAME`, so re-pressing a pad that is
-// already right works too.
+// already right works too. After each press it waits for that pad to be
+// released before looking for the next one: a reading still climbing from
+// the last press must not count again (that once assigned one pad to three
+// corners in a row). Each pad is assigned at most once per walk-through.
 function stepAssign() {
   const c = assign.corners[0];
   if (!c) {
@@ -263,25 +266,49 @@ function stepAssign() {
     dialog("Corners assigned", "Check the corners match the car, then tare.", [["Done", closeDialog, true]]);
     return;
   }
+  const done = assign.last ? `Pad ${assign.last.name} is ${assign.last.corner}. ` : "";
+  const text = assign.release
+    ? `${done}Release it, then press firmly on the pad under the ${WHEEL[c]} wheel.`
+    : `${done}Press firmly on the pad under the ${WHEEL[c]} wheel.`;
+  dialog(`Assign ${c}`, text, [
+    ["Stop", () => { assign = null; closeDialog(); }],
+    ["Skip", () => { assign.corners.shift(); assign.last = null; stepAssign(); }, true],
+  ]);
+  if (!assign.release) takeBaselines();
+}
+
+function takeBaselines() {
   assign.baselines = Object.fromEntries(frame.pads.map((p) => [p.name, p.kg ?? 0]));
   assign.warned = false;
-  dialog(`Assign ${c}`, `Press firmly on the pad under the ${WHEEL[c]} wheel.`, [
-    ["Stop", () => { assign = null; closeDialog(); }],
-    ["Skip", () => { assign.corners.shift(); stepAssign(); }, true],
-  ]);
-  if (mock) mockPress(c);
+  if (mock) mockPress(assign.corners[0]);
 }
 
 function checkPress() {
-  const pressed = frame.pads.filter((p) => p.kg !== null && p.kg - (assign.baselines[p.name] ?? p.kg) >= PRESS_KG);
+  if (assign.release) {
+    // Wait until the last pad pressed is back near where it started.
+    const p = frame.pads.find((x) => x.name === assign.release.name);
+    if (!p || p.kg === null || p.kg - assign.release.from < PRESS_KG / 2) {
+      assign.release = null;
+      takeBaselines();
+      $("dlg-text").textContent = `Pad ${assign.last.name} is ${assign.last.corner}. Now press firmly on the pad under the ${WHEEL[assign.corners[0]]} wheel.`;
+    }
+    return;
+  }
+  const pressed = frame.pads.filter(
+    (p) => !assign.used.has(p.name) && p.kg !== null && p.kg - (assign.baselines[p.name] ?? p.kg) >= PRESS_KG,
+  );
   if (pressed.length > 1 && !assign.warned) {
     assign.warned = true;
     $("dlg-text").textContent = "More than one pad is pressed: press only one.";
   }
   if (pressed.length !== 1) return;
+  const pad = pressed[0];
   const c = assign.corners.shift();
-  send(`assign ${c} ${pressed[0].name}`);
-  send(`blink ${pressed[0].name}`);
+  send(`assign ${c} ${pad.name}`);
+  send(`blink ${pad.name}`);
+  assign.used.add(pad.name);
+  assign.last = { name: pad.name, corner: c };
+  assign.release = { name: pad.name, from: assign.baselines[pad.name] ?? 0 };
   stepAssign();
 }
 
@@ -365,8 +392,11 @@ function mockStart() {
   let t = 0;
   setInterval(() => {
     t += 200;
+    // Ease toward the target like the pad's filter does (~2 s to settle), so
+    // the mock reproduces readings that are still climbing after a press.
+    mockPads.forEach((p) => (p.shown = (p.shown ?? p.base) + 0.25 * (p.base - p.tare + p.press - (p.shown ?? p.base))));
     onFrame({ v: 1, type: "weights", t_ms: t, pads: mockPads.map((p, i) => ({
-      name: p.name, corner: p.corner, kg: +(p.base - p.tare + p.press + Math.sin(t / 900 + i) * 0.04).toFixed(3),
+      name: p.name, corner: p.corner, kg: +(p.shown + Math.sin(t / 900 + i) * 0.04).toFixed(3),
       stable: Math.sin(t / 3000 + i) > -0.7, calibrated: true, age_ms: i * 20 })) });
   }, 200);
 }
