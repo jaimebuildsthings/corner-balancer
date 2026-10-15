@@ -128,6 +128,10 @@ impl App {
                 self.on_incoming(incoming).await;
             }
             while let Ok(line) = LINES.try_receive() {
+                if line.from_web {
+                    // Show what the page asked for, so the console tells the whole story.
+                    say!("web> {}", line.as_str());
+                }
                 self.on_line(line.as_str()).await;
             }
             let now = Instant::now().as_millis();

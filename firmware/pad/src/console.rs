@@ -19,10 +19,12 @@ pub const LINE_MAX: usize = 64;
 pub struct Line {
     data: [u8; LINE_MAX],
     len: usize,
+    /// Sent by the web page rather than typed at the serial console.
+    pub from_web: bool,
 }
 
 impl Line {
-    const EMPTY: Line = Line { data: [0; LINE_MAX], len: 0 };
+    const EMPTY: Line = Line { data: [0; LINE_MAX], len: 0, from_web: false };
 
     /// The raw bytes typed so far.
     pub fn as_bytes(&self) -> &[u8] {
@@ -61,6 +63,7 @@ pub fn submit(command: &str) {
     let mut line = Line::EMPTY;
     line.data[..bytes.len()].copy_from_slice(bytes);
     line.len = bytes.len();
+    line.from_web = true;
     let _ = LINES.try_send(line);
 }
 
