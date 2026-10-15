@@ -71,7 +71,7 @@ pub static SIM_KG: AtomicU32 = AtomicU32::new(0);
 /// Holding the board's BOOT button adds [`BOOT_PRESS_KG`], like pressing on a pad.
 #[cfg(feature = "sim")]
 #[embassy_executor::task]
-pub async fn sim_task(ch: u8, boot_button: esp_hal::gpio::Input<'static>) {
+pub async fn sim_task(ch: u8) {
     const ZERO: f32 = -120_000.0;
     const COUNTS_PER_KG: f32 = 21_000.0;
     let mut ticker = embassy_time::Ticker::every(embassy_time::Duration::from_millis(100));
@@ -83,7 +83,7 @@ pub async fn sim_task(ch: u8, boot_button: esp_hal::gpio::Input<'static>) {
         rng ^= rng >> 17;
         rng ^= rng << 5;
         let noise = (rng % 81) as f32 - 40.0;
-        let pressed = if boot_button.is_low() { BOOT_PRESS_KG } else { 0.0 };
+        let pressed = if crate::button::HELD.load(Ordering::Relaxed) { BOOT_PRESS_KG } else { 0.0 };
         let kg = f32::from_bits(SIM_KG.load(Ordering::Relaxed)) + pressed;
         let counts = (ZERO + COUNTS_PER_KG * kg + noise).clamp(hx711::MIN as f32, hx711::MAX as f32);
         publish(ch, counts as i32);

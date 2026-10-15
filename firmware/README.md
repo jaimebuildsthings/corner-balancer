@@ -54,6 +54,10 @@ test noise             # then: test repeat, test offcenter, test creep 600, test
 
 With `--features sim` there are no load cells: set the simulated load with `sim 20` (kg), `sim 0`, and so on. Holding the board's **BOOT** button adds 20 kg while held, like pressing on a pad.
 
+## Web UI on a phone
+
+Make one pad the host: `host on`, or hold **BOOT** for 5 s (two long LED blinks = on, one = off). It restarts as the open Wi-Fi network `CornerScales-<name>`; join it and the page opens (or browse to `http://192.168.4.1/`). See [web/README.md](../web/README.md).
+
 ## Pads and corners
 
 Every pad broadcasts its weight 10×/s and listens for the others. Each pad has a **name** (last 6 hex digits of its MAC, e.g. `9a91a8`; put it on a sticker) and a **corner** (LF, RF, LR, RR, or none), saved on the pad.

@@ -45,8 +45,17 @@ esp-bootloader-esp-idf = "0.6.0"
 esp-println = "0.18.0"
 esp-storage = "0.10.0"
 # Beta: pinned exactly so a new pre-release can't change the API under us.
-esp-radio = { version = "=1.0.0-beta.1", features = ["esp-now", "unstable"] }
+esp-radio = { version = "=1.0.0-beta.1", features = ["esp-now", "wifi", "unstable"] }
 esp-alloc = "0.11.0"
+# Web UI on the host pad: Wi-Fi access point, DHCP, captive DNS, HTTP + WebSocket.
+embassy-net = { version = "0.9.1", features = ["tcp", "udp", "medium-ethernet", "proto-ipv4"] }
+embassy-futures = "0.1"
+picoserve = { version = "0.20.1", features = ["embassy", "ws"] }
+edge-dhcp = "0.8.0"
+edge-captive = "0.8.0"
+edge-nal = "0.7.0"
+# Only IPv4 + UDP: its default ("all") also turns on embassy-net's DNS client, IPv6, ICMP...
+edge-nal-embassy = { version = "0.9.0", default-features = false, features = ["proto-ipv4", "medium-ethernet", "udp"] }
 embassy-executor = "0.10.0"
 embassy-time = "0.5.0"
 embassy-sync = "0.8.0"

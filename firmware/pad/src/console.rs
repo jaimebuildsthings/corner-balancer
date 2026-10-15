@@ -19,10 +19,12 @@ pub const LINE_MAX: usize = 64;
 pub struct Line {
     data: [u8; LINE_MAX],
     len: usize,
+    /// Sent by the web page rather than typed at the serial console.
+    pub from_web: bool,
 }
 
 impl Line {
-    const EMPTY: Line = Line { data: [0; LINE_MAX], len: 0 };
+    const EMPTY: Line = Line { data: [0; LINE_MAX], len: 0, from_web: false };
 
     /// The raw bytes typed so far.
     pub fn as_bytes(&self) -> &[u8] {
@@ -50,6 +52,20 @@ pub fn visible_partial() -> Option<Line> {
 
 /// Completed lines for the app.
 pub static LINES: Channel<CriticalSectionRawMutex, Line, 4> = Channel::new();
+
+/// Queues a command from another source (the web page) as if typed.
+/// Over-long commands and a full queue are dropped.
+pub fn submit(command: &str) {
+    let bytes = command.trim().as_bytes();
+    if bytes.is_empty() || bytes.len() > LINE_MAX {
+        return;
+    }
+    let mut line = Line::EMPTY;
+    line.data[..bytes.len()].copy_from_slice(bytes);
+    line.len = bytes.len();
+    line.from_web = true;
+    let _ = LINES.try_send(line);
+}
 
 /// Reads bytes, echoes them, and queues each line on Enter.
 #[embassy_executor::task]

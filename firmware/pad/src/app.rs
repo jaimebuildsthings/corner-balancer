@@ -14,7 +14,7 @@ use protocol::{Command, ParseError};
 use scale::bench::{CreepTest, NoiseTest, PlaceEvent, PlaceRemoveTest, Targets};
 use scale::{CalPoint, Calibration, FilterConfig, Fit, Reading, Scale};
 
-use crate::calib_store::CalibStore;
+use crate::calib_store::{CalibStore, Stored};
 use crate::console::LINES;
 use crate::link::{INBOX, Incoming, OUTBOX, Outgoing};
 use crate::out::say;
@@ -24,6 +24,9 @@ use crate::{MAX_CHANNELS, temperature};
 
 /// Default full-scale rating for pass targets: the phase 1 bench pad.
 const DEFAULT_FULL_SCALE_KG: f32 = 200.0;
+
+/// Below this total, percentages are just noise and aren't shown.
+const MIN_TOTAL_KG: f32 = 1.0;
 
 /// Interval between scales-protocol frames.
 const JSON_INTERVAL_MS: u64 = 200;
@@ -60,12 +63,13 @@ pub struct App {
     pads: Pads,
     /// Corner last reported as claimed by another pad too, so the warning prints once.
     warned_conflict: Option<Corner>,
+    /// This pad runs the Wi-Fi network and web page.
+    host: bool,
 }
 
 impl App {
     /// `active` channels get a scale, using the stored calibration where there is one.
-    pub fn new(active: usize, mut store: Option<CalibStore>, mac: [u8; 6]) -> Self {
-        let stored = store.as_mut().and_then(|s| s.load().ok()).unwrap_or_default();
+    pub fn new(active: usize, store: Option<CalibStore>, stored: Stored, mac: [u8; 6]) -> Self {
         let channels = core::array::from_fn(|i| {
             (i < active).then(|| {
                 let cal = stored.cals[i].clone();
@@ -93,6 +97,7 @@ impl App {
             store,
             pads: Pads::new(mac, stored.corner),
             warned_conflict: None,
+            host: stored.host,
         }
     }
 
@@ -105,6 +110,13 @@ impl App {
             self.pads.name(),
             corner_label(self.pads.corner)
         );
+        if self.host {
+            say!(
+                "web: join Wi-Fi {} and open http://{}/",
+                crate::web::ssid(&self.pads.mac).as_str(),
+                crate::web::ADDRESS
+            );
+        }
         if self.store.is_none() {
             say!("warning: no `calib` partition; calibration can't be saved. Flash with partitions.csv.");
         }
@@ -116,13 +128,20 @@ impl App {
                 self.on_incoming(incoming).await;
             }
             while let Ok(line) = LINES.try_receive() {
+                if line.from_web {
+                    // Show what the page asked for, so the console tells the whole story.
+                    say!("web> {}", line.as_str());
+                }
                 self.on_line(line.as_str()).await;
             }
             let now = Instant::now().as_millis();
             self.check_assign(now).await;
-            if self.json && now.saturating_sub(self.last_json_ms) >= JSON_INTERVAL_MS {
+            if (self.json || self.host) && now.saturating_sub(self.last_json_ms) >= JSON_INTERVAL_MS {
                 self.last_json_ms = now;
                 self.send_json(now).await;
+            }
+            if crate::button::LONG_PRESS.try_take().is_some() {
+                self.set_host(!self.host).await;
             }
         }
     }
@@ -301,6 +320,7 @@ impl App {
                 self.full_scale_kg = kg;
                 say!("full scale {kg} kg");
             }
+            Command::Host(on) => self.set_host(on).await,
             Command::Json(on) => {
                 self.json = on;
                 crate::console::QUIET.store(self.stream || self.json, Ordering::Relaxed);
@@ -401,7 +421,7 @@ impl App {
             }
             Command::Blink(who) => match self.resolve(who).await {
                 Some(mac) if mac == self.pads.mac => {
-                    crate::led::BLINK.signal(());
+                    crate::led::LED.signal(crate::led::Pattern::Find);
                     say!("blinking this pad");
                 }
                 Some(mac) => {
@@ -433,6 +453,15 @@ impl App {
             corner_label(self.pads.corner)
         );
         say!("full scale {} kg; dropped samples {}", self.full_scale_kg, DROPPED.load(Ordering::Relaxed));
+        if self.host {
+            say!(
+                "host: Wi-Fi {} (open), page at http://{}/",
+                crate::web::ssid(&self.pads.mac).as_str(),
+                crate::web::ADDRESS
+            );
+        } else {
+            say!("host: off (`host on`, or hold BOOT 5 s)");
+        }
         match temperature::latest() {
             Some(t) => say!("temperature {t:.2} C"),
             None => say!("temperature: no probe"),
@@ -493,6 +522,22 @@ impl App {
         } else {
             say!("active fit: none");
         }
+    }
+
+    /// Saves host mode, confirms on the LED and restarts, since Wi-Fi is set up at boot.
+    async fn set_host(&mut self, on: bool) {
+        if let Some(Err(e)) = self.store.as_mut().map(|s| s.save_host(on)) {
+            say!("error: host setting not saved: {e:?}");
+            return;
+        }
+        crate::led::LED.signal(if on { crate::led::Pattern::HostOn } else { crate::led::Pattern::HostOff });
+        if on {
+            say!("host on: restarting as Wi-Fi network {}", crate::web::ssid(&self.pads.mac).as_str());
+        } else {
+            say!("host off: restarting");
+        }
+        embassy_time::Timer::after_millis(3_000).await;
+        esp_hal::system::software_reset()
     }
 
     /// This pad's channel-0 reading and whether it is calibrated.
@@ -559,7 +604,7 @@ impl App {
                 self.pads.assigning = None;
                 self.assign(mac, Some(corner)).await;
                 if mac == self.pads.mac {
-                    crate::led::BLINK.signal(());
+                    crate::led::LED.signal(crate::led::Pattern::Find);
                 } else {
                     self.send(Target::Pad(mac), Cmd::Blink);
                 }
@@ -608,7 +653,7 @@ impl App {
                         say!("tare requested by pad {from}");
                         self.request_tare().await;
                     }
-                    Cmd::Blink if msg.is_for(&self.pads.mac) => crate::led::BLINK.signal(()),
+                    Cmd::Blink if msg.is_for(&self.pads.mac) => crate::led::LED.signal(crate::led::Pattern::Find),
                     Cmd::Tare | Cmd::Blink => {}
                 }
             }
@@ -679,7 +724,12 @@ impl App {
         }
         let mut buf = crate::out::Buf::new();
         let _ = json::write_weights(&mut buf, now_ms, &pads[..n]);
-        crate::out::line(buf.as_bytes()).await;
+        if self.host {
+            crate::web::publish(buf.as_bytes());
+        }
+        if self.json {
+            crate::out::line(buf.as_bytes()).await;
+        }
     }
 
     async fn show_pads(&self) {
@@ -722,7 +772,7 @@ impl App {
         let settling = if all_stable { "" } else { "  (settling)" };
         let (present, count) = present_corners(&w);
         match (w, count) {
-            ([Some(lf), Some(rf), Some(lr), Some(rr)], _) => {
+            ([Some(lf), Some(rf), Some(lr), Some(rr)], _) if lf + rf + lr + rr >= MIN_TOTAL_KG => {
                 if let Some(c) = scale::corners(lf, rf, lr, rr) {
                     say!(
                         "total {:.3} kg  front {:.2} %  left {:.2} %  cross (LF+RR) {:.2} %{settling}",
@@ -732,6 +782,10 @@ impl App {
                         c.cross_pct
                     );
                 }
+            }
+            (_, 2 | 4) if w.iter().flatten().sum::<f32>() < MIN_TOTAL_KG => {
+                let total: f32 = w.iter().flatten().sum();
+                say!("total {total:.3} kg (percentages from {MIN_TOTAL_KG} kg){settling}");
             }
             (_, 2) => {
                 let (a, b) = (present[0], present[1]);

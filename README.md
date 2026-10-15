@@ -12,7 +12,7 @@ DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell 
 | Path | Contents |
 | --- | --- |
 | [`firmware/`](firmware/) | Rust firmware (`esp-hal`, Embassy). `crates/` hold the hardware-independent logic with host tests; `pad/` is the ESP32-S3 binary. [Build and flash](firmware/README.md). |
-| `web/` | Phone UI (phase 1b, not started). |
+| [`web/`](web/) | [Phone UI](web/README.md), served by the host pad over its own Wi-Fi. |
 | [`tools/`](tools/) | [Plot page](tools/README.md) for captured test runs. |
 | [`docs/`](docs/) | [Plan](docs/plan.md) · [Architecture](docs/ARCHITECTURE.md) · [Wiring](docs/wiring.md) · [Assembly](docs/assembly.md) · [Test protocol](docs/test-protocol.md) · [Parts](docs/bom.md) · [Scales protocol](docs/scales-protocol.md) |
 | [`hardware/`](hardware/) | Mechanical drawings and CAD (future). |

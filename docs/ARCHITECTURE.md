@@ -10,11 +10,11 @@ Every board is a **pad**. Pads broadcast to each other, so connecting to **any**
 
 ```mermaid
 flowchart TB
-    phone["📱 Phone (e.g. stringline.ing)"]
+    phone["📱 Phone browser"]
     laptop["💻 Laptop (terminal or stringline.ing)"]
     A["Any pad<br/>(reports every pad it hears)"]
     B["Other pads"]
-    phone -. "Web Bluetooth (planned)" .-> A
+    phone -- "Wi-Fi + WebSocket<br/>(host pad's own network)" --> A
     laptop -- "USB serial: console, CSV,<br/>JSON frames for Web Serial" --> A
     B -- "ESP-NOW broadcast (1b)" --> A
 ```
@@ -81,7 +81,9 @@ flowchart TB
 | `temperature.rs` | Probe reading, shared as an atomic |
 | `link.rs` | ESP-NOW: broadcast readings and commands, collect others' |
 | `pads.rs` | Pad names, corners, remote pads by MAC, press-to-assign |
-| `led.rs` | Blink the board LED |
+| `led.rs` | LED patterns: find-me blink, host on/off |
+| `button.rs` | BOOT button: hold 5 s to toggle host; sim "press" |
+| `web.rs` | Host pad: Wi-Fi access point, DHCP, captive DNS, HTTP + WebSocket |
 
 ## Signal chain
 
@@ -129,6 +131,8 @@ From [`partitions.csv`](../firmware/pad/partitions.csv). It fits 4 MB, so both b
 | Pad firmware: sampling, console, calibration, bench tests, CSV | ✅ Builds; untested on hardware |
 | ESP-NOW between pads, `pads` view | ✅ Builds; untested on hardware |
 | Scales protocol over USB serial (`json on`) | ✅ Builds; untested on hardware |
-| Pad names, press-to-assign corners, blink, tare all | ✅ Builds; untested on hardware |
-| BLE for Web Bluetooth | ⏳ Next |
+| Pad names, press-to-assign corners, blink, tare all | ✅ Tested on 2 ESP32s (sim) |
+| Web UI on the host pad's Wi-Fi (`web/`) | ✅ Tested: 2 ESP32s (sim) + iPhone (captive portal, Safari, assign walk-through) |
+| Garage Wi-Fi (join an existing network) | ⏳ Later |
+| BLE for Web Bluetooth | ⏳ Maybe |
 | OTA updates | ⏳ Later (partition slots already in place) |

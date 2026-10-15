@@ -1,14 +1,34 @@
-//! The board LED, flashed by `blink` so someone can find a pad.
+//! The board LED: flashed by `blink` so someone can find a pad, and used to
+//! confirm host mode changes.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 
-/// Raise to flash the LED for a few seconds.
-pub static BLINK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// What to show.
+#[derive(Clone, Copy)]
+pub enum Pattern {
+    /// Six quick flashes: "here I am".
+    Find,
+    /// Two long flashes: host mode on.
+    HostOn,
+    /// One long flash: host mode off.
+    HostOff,
+}
 
-const FLASHES: usize = 6;
-const HALF_PERIOD_MS: u64 = 250;
+impl Pattern {
+    /// Flash count and on/off time, ms.
+    fn timing(self) -> (usize, u64) {
+        match self {
+            Pattern::Find => (6, 250),
+            Pattern::HostOn => (2, 700),
+            Pattern::HostOff => (1, 700),
+        }
+    }
+}
+
+/// Raise to show a pattern.
+pub static LED: Signal<CriticalSectionRawMutex, Pattern> = Signal::new();
 
 /// Original ESP32 DevKit boards: a plain LED on GPIO2.
 #[cfg(feature = "esp32")]
@@ -17,12 +37,12 @@ pub async fn task(pin: esp_hal::peripherals::GPIO2<'static>) {
     use esp_hal::gpio::{Level, Output, OutputConfig};
     let mut led = Output::new(pin, Level::Low, OutputConfig::default());
     loop {
-        BLINK.wait().await;
-        for _ in 0..FLASHES {
+        let (count, ms) = LED.wait().await.timing();
+        for _ in 0..count {
             led.set_high();
-            Timer::after_millis(HALF_PERIOD_MS).await;
+            Timer::after_millis(ms).await;
             led.set_low();
-            Timer::after_millis(HALF_PERIOD_MS).await;
+            Timer::after_millis(ms).await;
         }
     }
 }
@@ -55,14 +75,19 @@ pub async fn task(rmt: esp_hal::peripherals::RMT<'static>, pin: esp_hal::periphe
     let mut led = channel.with_pin(pin);
     let off = frame(0, 0, 0);
     let _ = led.transmit(&off).await;
-    let on = frame(0, 0, 64); // dim blue
     loop {
-        BLINK.wait().await;
-        for _ in 0..FLASHES {
+        let pattern = LED.wait().await;
+        let on = match pattern {
+            Pattern::Find => frame(0, 0, 64),    // blue
+            Pattern::HostOn => frame(48, 0, 0),  // green
+            Pattern::HostOff => frame(0, 48, 0), // red
+        };
+        let (count, ms) = pattern.timing();
+        for _ in 0..count {
             let _ = led.transmit(&on).await;
-            Timer::after_millis(HALF_PERIOD_MS).await;
+            Timer::after_millis(ms).await;
             let _ = led.transmit(&off).await;
-            Timer::after_millis(HALF_PERIOD_MS).await;
+            Timer::after_millis(ms).await;
         }
     }
 }

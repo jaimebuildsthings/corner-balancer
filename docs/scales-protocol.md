@@ -9,6 +9,7 @@ How an app (for example a web page) reads the scales. One JSON object per line, 
 | Transport | Status | Works in |
 | --- | --- | --- |
 | USB serial, 115200 baud | ✅ Now | Chrome/Edge desktop via Web Serial; any serial terminal |
+| WebSocket `ws://192.168.4.1/ws` on the host pad's Wi-Fi | ✅ Now | Any browser on that network (used by the built-in page). Frames as text messages; commands sent as text messages |
 | Bluetooth LE | ⏳ Planned | Chrome on Android/desktop via Web Bluetooth (not iOS Safari) |
 
 Connect to **any pad**: each one hears the others over ESP-NOW and reports all of them.

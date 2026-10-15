@@ -3,8 +3,9 @@
 //! The partition holds two 4 KB slots in the crash-safe record format from
 //! `protocol::record`; each save goes to the slot not holding the newest record.
 //! The payload is, per channel, a length byte followed by that channel's
-//! `Calibration::encode` bytes, then an optional settings block `b'S', corner`
-//! (corner 0–3 = LF, RF, LR, RR; anything else = unassigned).
+//! `Calibration::encode` bytes, then an optional settings block
+//! `b'S', corner, flags` (corner 0–3 = LF, RF, LR, RR, anything else =
+//! unassigned; flags bit 0 = host). Older records without flags still load.
 //! Records written before the settings block existed still load.
 
 use esp_bootloader_esp_idf::partitions;
@@ -17,7 +18,8 @@ use scale::calibration::ENCODED_MAX_LEN;
 use crate::MAX_CHANNELS;
 
 const SLOT_LEN: u32 = FlashStorage::SECTOR_SIZE;
-const SETTINGS_LEN: usize = 2;
+const SETTINGS_LEN: usize = 3;
+const FLAG_HOST: u8 = 1 << 0;
 const PAYLOAD_MAX: usize = MAX_CHANNELS * (1 + ENCODED_MAX_LEN) + SETTINGS_LEN;
 const RECORD_MAX: usize = record::OVERHEAD + PAYLOAD_MAX;
 
@@ -39,6 +41,8 @@ pub struct Stored {
     pub cals: [Calibration; MAX_CHANNELS],
     /// This pad's corner, if assigned.
     pub corner: Option<Corner>,
+    /// This pad runs the Wi-Fi access point and web page.
+    pub host: bool,
 }
 
 /// Calibration and settings storage.
@@ -81,8 +85,9 @@ impl CalibStore {
                 *cal = Calibration::decode(bytes).unwrap_or_default();
                 rest = &tail[usize::from(len)..];
             }
-            if let [b'S', corner, ..] = rest {
+            if let [b'S', corner, rest @ ..] = rest {
                 stored.corner = corner_from_byte(*corner);
+                stored.host = rest.first().is_some_and(|f| f & FLAG_HOST != 0);
             }
         }
         self.saved = stored.clone();
@@ -91,13 +96,19 @@ impl CalibStore {
 
     /// Saves calibration points, keeping the stored settings.
     pub fn save_cals(&mut self, cals: &[Calibration; MAX_CHANNELS]) -> Result<(), StoreError> {
-        let next = Stored { cals: cals.clone(), corner: self.saved.corner };
+        let next = Stored { cals: cals.clone(), ..self.saved.clone() };
         self.save(next)
     }
 
     /// Saves the corner, keeping the stored calibration.
     pub fn save_corner(&mut self, corner: Option<Corner>) -> Result<(), StoreError> {
         let next = Stored { corner, ..self.saved.clone() };
+        self.save(next)
+    }
+
+    /// Saves the host setting, keeping everything else.
+    pub fn save_host(&mut self, host: bool) -> Result<(), StoreError> {
+        let next = Stored { host, ..self.saved.clone() };
         self.save(next)
     }
 
@@ -111,7 +122,8 @@ impl CalibStore {
             payload[len + 1..len + 1 + n].copy_from_slice(&enc[..n]);
             len += 1 + n;
         }
-        payload[len..len + SETTINGS_LEN].copy_from_slice(&[b'S', corner_to_byte(stored.corner)]);
+        let flags = if stored.host { FLAG_HOST } else { 0 };
+        payload[len..len + SETTINGS_LEN].copy_from_slice(&[b'S', corner_to_byte(stored.corner), flags]);
         len += SETTINGS_LEN;
 
         let (slot, seq) = match self.newest {
