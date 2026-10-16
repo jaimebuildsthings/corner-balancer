@@ -104,7 +104,7 @@ impl App {
     /// Runs forever: handles samples as they arrive and console lines in between.
     pub async fn run(mut self) -> ! {
         say!(
-            "corner-balancer {} ({}): pad {}, corner {}. Type `help`.",
+            "corner-scales {} ({}): pad {}, corner {}. Type `help`.",
             env!("CARGO_PKG_VERSION"),
             crate::CHIP,
             self.pads.name(),
