@@ -1,6 +1,8 @@
-# DIY Corner Scales — Prototype Plan
+# DIY Corner Scales: Plan
 
-Oct 6, 2026 · @jaimebuildsthings
+Oct 6, 2026 · @jaimebuildsthings · Status: phase 1
+
+**Contents:** [Goal](#goal-and-approach) · [Phase 1](#phase-1-bench-prototype) · [Firmware](#firmware-and-software) · [Tests](#test-protocol-and-pass-criteria) · [Phase 2](#phase-2-full-size-single-pad) · [Phase 3](#phase-3-four-pad-set) · [Risks](#risks-and-next-steps)
 
 ## Goal and approach
 
