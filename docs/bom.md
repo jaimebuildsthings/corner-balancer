@@ -1,6 +1,6 @@
 # Bill of materials
 
-Prices are approximate. Tools not included (soldering iron, multimeter, drill, calipers).
+Prices are approximate, Oct 2026. Tools not included (soldering iron, multimeter, drill, calipers).
 
 **Contents:** [Phase 1a](#phase-1a-one-bench-pad) · [Phase 1b](#phase-1b-second-pad) · [Later phases](#later-phases)
 

@@ -7,6 +7,8 @@ DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell 
 > [!WARNING]
 > **A car on scales can roll or slip off a pad or ramp.** Chock the wheels, keep people clear while rolling on and off, and never get under a car resting on scales. Build and use these at your own risk; see the license for the warranty disclaimer.
 
+![Full-size pad with its ramp (draft)](hardware/full-size-pad/images/assembly.png)
+
 ## What's here
 
 | Path | Contents |
@@ -15,7 +17,7 @@ DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell 
 | [`web/`](web/) | [Phone UI](web/README.md), served by the host pad over its own Wi-Fi. |
 | [`tools/`](tools/) | [Plot page](tools/README.md) for captured test runs. |
 | [`docs/`](docs/) | [Plan](docs/plan.md) · [Architecture](docs/ARCHITECTURE.md) · [Wiring](docs/wiring.md) · [Assembly](docs/assembly.md) · [Test protocol](docs/test-protocol.md) · [Parts](docs/bom.md) · [Scales protocol](docs/scales-protocol.md) |
-| [`hardware/`](hardware/) | Mechanical drawings and CAD (future). |
+| [`hardware/`](hardware/) | [Full-size pad](hardware/full-size-pad/README.md): draft OpenSCAD model, renders |
 
 ## Quick start
 
