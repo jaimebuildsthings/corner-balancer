@@ -1,4 +1,4 @@
-# corner-balancer
+# corner-scales
 
 DIY corner-weight scales for cars, built on an ESP32-S3 and the HX711 load cell amplifier. Each pad is a self-contained instrument; pads share readings over ESP-NOW, so connecting to any one of them (USB serial now, Bluetooth planned) gives all four corners. No network needed.
 
